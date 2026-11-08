@@ -1,0 +1,90 @@
+version: v1
+
+{% macro value_or_required(value) %}{{ value | yaml_string }}{% if not value %}  # {{ required }}{% endif %}{% endmacro %}
+metadata:
+  name: {{ value_or_required(name) }}
+  description: ""  # {{ required }}
+  pythonVersion: {{ python_version | yaml_string }}
+  uvBuildVersion: {{ uv_build_version | yaml_string }}
+
+bundle:
+  onJobFailureWebhookNotificationIds:
+{% for webhook_id in bundle.on_job_failure_webhook_notification_ids %}
+    - {{ webhook_id | yaml_string }}
+{% endfor %}
+  onJobFailureEmails:
+{% for email in bundle.on_job_failure_emails %}
+    - {{ email | yaml_string }}
+{% endfor %}
+  tags:
+{% for key, value in bundle.tags.items() %}
+    {{ key }}: {{ value | yaml_string }}
+{% endfor %}
+  targets:
+{% for name, target in bundle.targets.items() %}
+    - {{ name }}:
+        host: {{ target.host | yaml_string }}
+        servicePrincipal: {{ target.service_principal | yaml_string }}
+        computePolicy: {{ target.compute_policy | yaml_string }}
+        onTaskFailureWebhookNotificationIds:
+{% for webhook_id in target.on_task_failure_webhook_notification_ids %}
+          - {{ webhook_id | yaml_string }}
+{% endfor %}
+        onTaskFailureEmails:
+{% for email in target.on_task_failure_emails %}
+          - {{ email | yaml_string }}
+{% endfor %}
+        permissions:
+{% for level, grantees in [("canManage", target.permissions.can_manage), ("canRun", target.permissions.can_run)] %}
+          {{ level }}:
+{% if grantees.service_principal %}
+            servicePrincipal:
+{% for service_principal in grantees.service_principal %}
+              - {{ service_principal | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if grantees.groups %}
+            groups:
+{% for group in grantees.groups %}
+              - {{ group | yaml_string }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+
+job:
+  executionMode: {{ execution_mode | yaml_string }}
+{% if execution_mode == "batch" %}
+  batchSchedule: ""  # {{ required }}
+{% else %}
+  # batchSchedule: {{ sample_batch_schedule | yaml_string }}  # {{ batch_only }}
+{% endif %}
+  bronze:
+    sourcePath: ""  # {{ required }}
+    checkpointPath: {{ value_or_required(layers.bronze.checkpoint_path) }}
+    targetTable: {{ value_or_required(layers.bronze.target_table) }}
+    {{ "# " if execution_mode == "batch" else "" }}triggerInterval: {{ trigger_interval | yaml_string }}  # {{ continuous_only }}
+  silver:
+    checkpointPath: {{ value_or_required(layers.silver.checkpoint_path) }}
+    targetTable: {{ value_or_required(layers.silver.target_table) }}
+    {{ "# " if execution_mode == "batch" else "" }}triggerInterval: {{ trigger_interval | yaml_string }}  # {{ continuous_only }}
+  gold:
+    upsertLatestKey: {{ upsert_latest_key | yaml_string }}
+    checkpointPath: {{ value_or_required(layers.gold.checkpoint_path) }}
+    targetTable: {{ value_or_required(layers.gold.target_table) }}
+    {{ "# " if execution_mode == "batch" else "" }}triggerInterval: {{ trigger_interval | yaml_string }}  # {{ continuous_only }}
+
+schema:
+  columns:
+{% for column in schema.columns %}
+    - name: {{ column.name | yaml_string }}
+      description: {{ description_placeholder | yaml_string }}
+      dynamoType: {{ column.dynamo_type | yaml_string }}
+      targetType: ""  # {{ required }}
+      path: {{ column.path | yaml_string }}
+      key: {{ "true" if column.key else "false" }}
+{% endfor %}
+  primaryKeys:
+{% for key in schema.primary_keys %}
+    - {{ key | yaml_string }}
+{% endfor %}

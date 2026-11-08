@@ -1,0 +1,85 @@
+# Defaults for v1 pipeline YAMLs and the skill's commands.
+#
+# A pipeline YAML uses these values for every setting it leaves out, and
+# `generate-yaml` writes them into the YAMLs it creates. Edit them to change
+# the defaults for every pipeline. Values are checked with the same rules as the
+# pipeline YAML, so an invalid default fails before anything is generated.
+
+[cli]
+# AWS CLI profile and region every AWS command uses.
+aws_profile = "default"
+aws_region = "us-east-1"
+# Items `generate-yaml` scans to infer the schema.
+sample_size = 100
+# `scaffold` writes each project to <projects_dir>/<metadata.name>/ unless
+# --output-dir is passed.
+projects_dir = "dabs"
+
+[metadata]
+python_version = "3.12"
+uv_build_version = ">=0.13.7,<0.14.0"
+
+[bundle]
+on_job_failure_webhook_notification_ids = ["XXXXXXXXX"]
+on_job_failure_emails = ["jduran9987@gmail.com"]
+
+[bundle.tags]
+project = "orders"
+SOURCE = "dynamo"
+
+# Defaults for every target (dev, qa, uat, prod). `{target}` in
+# service_principal is replaced by the target's name.
+[bundle.target]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+service_principal = "sp_ingestion_{target}"
+on_task_failure_webhook_notification_ids = ["XXXXXXXXX"]
+on_task_failure_emails = ["jduran9987@gmail.com"]
+# The target's service principal also gets CAN_MANAGE.
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+
+# Optional overrides for one target, with any of the [bundle.target] keys.
+# [bundle.targets.prod]
+# host = "https://my-prod-workspace.cloud.databricks.com"
+
+[job]
+# "continuous" or "batch".
+execution_mode = "continuous"
+# Used in continuous mode.
+trigger_interval = "1 minute"
+upsert_latest_key = "_event_timestamp"
+
+# Checkpoint paths and target tables. They may contain `{env}`, which each target
+# replaces with its name. An empty value means the pipeline YAML must set it.
+[job.bronze]
+checkpoint_path = ""
+target_table = ""
+
+[job.silver]
+checkpoint_path = ""
+target_table = ""
+
+[job.gold]
+checkpoint_path = ""
+target_table = ""
+
+# Resources `create-stream` creates for a table: a Kinesis data stream named after
+# the table, and a Firehose stream named <table>-firehose that writes to S3.
+[stream]
+shard_count = 3
+# Existing role Firehose uses to read the Kinesis stream and write to the bucket.
+firehose_role_arn = "arn:aws:iam::123456789012:role/firehose_delivery_role"
+bucket_arn = "arn:aws:s3:::dev-drivewealth-kinesis"
+# Firehose writes a file when either limit is reached. Dynamic partitioning needs
+# 64 to 128 MB and at least 60 seconds.
+buffer_size_mb = 128
+buffer_interval_seconds = 300
+# How long Firehose retries delivery to a partition before writing to the error
+# prefix.
+partition_retry_seconds = 60
+# How often to check while resources become active, and how long one run waits
+# in total. At most 540, so a run reports a timeout before Claude Code's
+# 10-minute command limit stops it.
+poll_interval_seconds = 10
+wait_timeout_seconds = 540

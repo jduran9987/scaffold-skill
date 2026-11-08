@@ -1,0 +1,179 @@
+version: v1
+
+metadata:
+  name: "orders"
+  description: ""  # Required field, please fill.
+  pythonVersion: "3.12"
+  uvBuildVersion: ">=0.13.7,<0.14.0"
+
+bundle:
+  onJobFailureWebhookNotificationIds:
+    - "XXXXXXXXX"
+  onJobFailureEmails:
+    - "jduran9987@gmail.com"
+  tags:
+    project: "orders"
+    SOURCE: "dynamo"
+  targets:
+    - dev:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_dev"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_dev"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - qa:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_qa"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_qa"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - uat:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_uat"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_uat"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - prod:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_prod"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_prod"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+
+job:
+  executionMode: "continuous"
+  # batchSchedule: "0 0 2 * * ?"  # This field only applies when executionMode is batch.
+  bronze:
+    sourcePath: ""  # Required field, please fill.
+    checkpointPath: ""  # Required field, please fill.
+    targetTable: ""  # Required field, please fill.
+    triggerInterval: "1 minute"  # This field only applies when executionMode is continuous.
+  silver:
+    checkpointPath: ""  # Required field, please fill.
+    targetTable: ""  # Required field, please fill.
+    triggerInterval: "1 minute"  # This field only applies when executionMode is continuous.
+  gold:
+    upsertLatestKey: "_event_timestamp"
+    checkpointPath: ""  # Required field, please fill.
+    targetTable: ""  # Required field, please fill.
+    triggerInterval: "1 minute"  # This field only applies when executionMode is continuous.
+
+schema:
+  columns:
+    - name: "id"
+      description: "Please fill or remove."
+      dynamoType: "N"
+      targetType: ""  # Required field, please fill.
+      path: "id"
+      key: true
+    - name: "created_at"
+      description: "Please fill or remove."
+      dynamoType: "S"
+      targetType: ""  # Required field, please fill.
+      path: "createdAt"
+      key: true
+    - name: "address_details__city"
+      description: "Please fill or remove."
+      dynamoType: "S"
+      targetType: ""  # Required field, please fill.
+      path: "addressDetails.M.city"
+      key: false
+    - name: "address_details__geo__lat"
+      description: "Please fill or remove."
+      dynamoType: "N"
+      targetType: ""  # Required field, please fill.
+      path: "addressDetails.M.geo.M.lat"
+      key: false
+    - name: "address_details__geo__lng"
+      description: "Please fill or remove."
+      dynamoType: "N"
+      targetType: ""  # Required field, please fill.
+      path: "addressDetails.M.geo.M.lng"
+      key: false
+    - name: "address_details__zip_code"
+      description: "Please fill or remove."
+      dynamoType: "S"
+      targetType: ""  # Required field, please fill.
+      path: "addressDetails.M.zipCode"
+      key: false
+    - name: "amount"
+      description: "Please fill or remove."
+      dynamoType: "N"
+      targetType: ""  # Required field, please fill.
+      path: "amount"
+      key: false
+    - name: "is_gift"
+      description: "Please fill or remove."
+      dynamoType: "BOOL"
+      targetType: ""  # Required field, please fill.
+      path: "isGift"
+      key: false
+    - name: "labels"
+      description: "Please fill or remove."
+      dynamoType: "SS"
+      targetType: ""  # Required field, please fill.
+      path: "labels"
+      key: false
+    - name: "notes"
+      description: "Please fill or remove."
+      dynamoType: "NULL"
+      targetType: ""  # Required field, please fill.
+      path: "notes"
+      key: false
+    - name: "status"
+      description: "Please fill or remove."
+      dynamoType: "S"
+      targetType: ""  # Required field, please fill.
+      path: "status"
+      key: false
+  primaryKeys:
+    - "id"
+    - "created_at"

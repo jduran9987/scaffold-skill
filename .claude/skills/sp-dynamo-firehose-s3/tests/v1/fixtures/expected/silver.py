@@ -1,0 +1,368 @@
+"""Silver job for the DynamoDB -> Firehose -> S3 source pattern.
+
+Streams change events from the bronze table, flattens each event's VARIANT column
+into typed columns, and appends the result to an existing Delta table. The job
+never creates the target table and fails if the table does not exist.
+
+The stream runs until it is stopped or fails.
+
+Typical usage:
+
+    silver --env dev
+"""
+
+import logging
+from dataclasses import dataclass
+from functools import partial
+
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.streaming import StreamingQuery
+
+from orders.cli import parse_args
+from orders.env import resolve_env
+from orders.logs import configure_logging
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnSpec:
+    """A column to extract from a DynamoDB change event.
+
+    Attributes:
+        name: Column name in the silver table.
+        dynamo_type: DynamoDB type code of the attribute, such as `S` or `N`.
+        target_type: Spark SQL type to cast the value to.
+        path: Dot-separated attribute path as it appears in the DynamoDB payload,
+            including the `M` level of nested maps.
+        key: Whether the attribute is part of the DynamoDB table's key.
+    """
+
+    name: str
+    dynamo_type: str
+    target_type: str
+    path: str
+    key: bool = False
+
+
+# Values from the pipeline YAML.
+SOURCE_TABLE = "{env}.bronze.orders"
+CHECKPOINT_PATH = "s3://{env}-datalake-7472/scaffoldskill/silver/checkpoint/"
+TARGET_TABLE = "{env}.silver.orders"
+TRIGGER_INTERVAL = "1 minute"
+COLUMNS = (
+    ColumnSpec(
+        name="id",
+        dynamo_type="N",
+        target_type="int",
+        path="id",
+        key=True,
+    ),
+    ColumnSpec(
+        name="created_at",
+        dynamo_type="S",
+        target_type="timestamp",
+        path="createdAt",
+        key=True,
+    ),
+    ColumnSpec(
+        name="amount",
+        dynamo_type="N",
+        target_type="decimal(22, 2)",
+        path="amount",
+    ),
+    ColumnSpec(
+        name="status",
+        dynamo_type="S",
+        target_type="string",
+        path="status",
+    ),
+    ColumnSpec(
+        name="address__city",
+        dynamo_type="S",
+        target_type="string",
+        path="addressDetails.M.city",
+    ),
+    ColumnSpec(
+        name="address__state",
+        dynamo_type="S",
+        target_type="string",
+        path="addressDetails.M.state",
+    ),
+    ColumnSpec(
+        name="address__zip_code",
+        dynamo_type="S",
+        target_type="string",
+        path="addressDetails.M.zipCode",
+    ),
+)
+
+VARIANT_COLUMN = "data"
+IMAGE_COLUMN = "_image"
+BRONZE_METADATA_COLUMNS = ("_ingested_at", "_file_path", "_file_modification_time")
+
+KEYS_PATH = "$.dynamodb.Keys"
+NEW_IMAGE_PATH = "$.dynamodb.NewImage"
+OLD_IMAGE_PATH = "$.dynamodb.OldImage"
+EVENT_NAME_PATH = "$.eventName"
+EVENT_ID_PATH = "$.eventID"
+EVENT_TIMESTAMP_PATH = "$.dynamodb.ApproximateCreationDateTime"
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SilverConfig:
+    """Resolved settings for a silver job run.
+
+    Attributes:
+        source_table: Fully qualified name of the bronze table.
+        checkpoint_path: S3 URL of the streaming checkpoint.
+        target_table: Fully qualified name of the target table.
+    """
+
+    source_table: str
+    checkpoint_path: str
+    target_table: str
+
+
+def build_config(env: str) -> SilverConfig:
+    """Builds the settings for a job run.
+
+    Args:
+        env: Deployment environment.
+
+    Returns:
+        The resolved job settings.
+    """
+    return SilverConfig(
+        source_table=resolve_env(SOURCE_TABLE, env),
+        checkpoint_path=resolve_env(CHECKPOINT_PATH, env),
+        target_table=resolve_env(TARGET_TABLE, env),
+    )
+
+
+def ensure_table_exists(spark: SparkSession, table_name: str) -> None:
+    """Fails fast when the target table does not exist.
+
+    Args:
+        spark: Active Spark session.
+        table_name: Fully qualified name of the table to check.
+
+    Raises:
+        ValueError: If the table does not exist.
+    """
+    if not spark.catalog.tableExists(table_name):
+        raise ValueError(f"Target table does not exist: {table_name}")
+
+
+def read_source(spark: SparkSession, source_table: str) -> DataFrame:
+    """Creates a streaming read of the bronze table.
+
+    Args:
+        spark: Active Spark session.
+        source_table: Fully qualified name of the bronze table.
+
+    Returns:
+        A streaming DataFrame of bronze records.
+    """
+    return spark.readStream.table(source_table)
+
+
+def variant_field(source_column: str, path: str, data_type: str) -> Column:
+    """Builds an expression that reads a field from a VARIANT column.
+
+    The expression returns NULL when the path is missing and raises an error when
+    the value cannot be cast to the requested type.
+
+    Args:
+        source_column: Name of the VARIANT column.
+        path: JSON path of the field.
+        data_type: Spark SQL type to cast the field to.
+
+    Returns:
+        The field expression.
+    """
+    return F.expr(f"variant_get({source_column}, '{path}', '{data_type}')")
+
+
+def build_attribute_path(path: str, dynamo_type: str) -> str:
+    """Builds the JSON path to a typed DynamoDB attribute value.
+
+    DynamoDB wraps every value in its type code, so `addressDetails.M.city` of
+    type `S` becomes `addressDetails.M.city.S`.
+
+    Args:
+        path: Dot-separated attribute path as it appears in the DynamoDB payload.
+        dynamo_type: DynamoDB type code of the attribute.
+
+    Returns:
+        The attribute's JSON path, relative to an item or its keys.
+    """
+    return f"{path}.{dynamo_type}"
+
+
+def build_column(column: ColumnSpec) -> Column:
+    """Builds the expression for a configured column.
+
+    Key attributes come from the event's keys, which every event type includes.
+    Other attributes come from the event's selected item image.
+
+    Args:
+        column: The column to extract.
+
+    Returns:
+        The column expression, aliased to the column name.
+    """
+    attribute_path = build_attribute_path(column.path, column.dynamo_type)
+    if column.key:
+        field = variant_field(
+            VARIANT_COLUMN, f"{KEYS_PATH}.{attribute_path}", column.target_type
+        )
+    else:
+        field = variant_field(IMAGE_COLUMN, f"$.{attribute_path}", column.target_type)
+    return field.alias(column.name)
+
+
+def flatten_events(df: DataFrame) -> DataFrame:
+    """Flattens DynamoDB change events into typed columns.
+
+    Each event uses one whole image: `NewImage` for inserts and modifies, and
+    `OldImage` for removes. Choosing per event rather than per column keeps an
+    attribute removed by a modify from taking its old value.
+
+    `_event_timestamp` comes from the event's `ApproximateCreationDateTime`, which
+    DynamoDB sends in epoch milliseconds and documents for ordering changes.
+
+    Args:
+        df: Streaming DataFrame of bronze records.
+
+    Returns:
+        The configured columns, `_event_name`, `_event_id`, `_event_timestamp`,
+        and bronze's metadata columns.
+    """
+    image = F.coalesce(
+        variant_field(VARIANT_COLUMN, NEW_IMAGE_PATH, "variant"),
+        variant_field(VARIANT_COLUMN, OLD_IMAGE_PATH, "variant"),
+    )
+    return df.withColumn(IMAGE_COLUMN, image).select(
+        *[build_column(column) for column in COLUMNS],
+        variant_field(VARIANT_COLUMN, EVENT_NAME_PATH, "string").alias("_event_name"),
+        variant_field(VARIANT_COLUMN, EVENT_ID_PATH, "string").alias("_event_id"),
+        F.timestamp_millis(
+            variant_field(VARIANT_COLUMN, EVENT_TIMESTAMP_PATH, "bigint")
+        ).alias("_event_timestamp"),
+        *BRONZE_METADATA_COLUMNS,
+    )
+
+
+def append_batch(
+    batch_df: DataFrame,
+    epoch_id: int,
+    target_table: str,
+    checkpoint_path: str,
+) -> None:
+    """Appends a microbatch to the target table.
+
+    `DataFrameWriterV2.append` fails if the table is missing, so a table dropped
+    during a run is not recreated. The transaction options make a replayed batch
+    a no-op, which keeps delivery exactly-once for this table.
+
+    Args:
+        batch_df: Flattened records in the microbatch.
+        epoch_id: Spark's batch number, unique within the checkpoint.
+        target_table: Fully qualified name of the target table.
+        checkpoint_path: Streaming checkpoint path, used as the transaction
+            application ID.
+    """
+    (
+        batch_df.writeTo(target_table)
+        .option("txnAppId", checkpoint_path)
+        .option("txnVersion", str(epoch_id))
+        .append()
+    )
+
+
+def write_batch(
+    batch_df: DataFrame,
+    epoch_id: int,
+    target_table: str,
+    checkpoint_path: str,
+) -> None:
+    """Writes one microbatch and logs its read and written record counts.
+
+    The microbatch is persisted so counting and writing it do not each read the
+    source table. The written count is the number of records appended, so a replayed
+    batch that Delta skips is still counted.
+
+    Args:
+        batch_df: Flattened records in the microbatch.
+        epoch_id: Spark's batch number, unique within the checkpoint.
+        target_table: Fully qualified name of the target table.
+        checkpoint_path: Streaming checkpoint path, used as the transaction
+            application ID.
+    """
+    batch_df.persist()
+    try:
+        records_read = batch_df.count()
+        if records_read > 0:
+            append_batch(batch_df, epoch_id, target_table, checkpoint_path)
+    finally:
+        batch_df.unpersist()
+
+    logger.info(
+        "Processed microbatch",
+        extra={
+            "epoch_id": epoch_id,
+            "target_table": target_table,
+            "records_read": records_read,
+            "records_written": records_read,
+        },
+    )
+
+
+def start_stream(df: DataFrame, config: SilverConfig) -> StreamingQuery:
+    """Starts the streaming write to the target table.
+
+    Args:
+        df: Streaming DataFrame to write.
+        config: Resolved job settings.
+
+    Returns:
+        The running streaming query.
+    """
+    return (
+        df.writeStream.trigger(processingTime=TRIGGER_INTERVAL)
+        .option("checkpointLocation", config.checkpoint_path)
+        .foreachBatch(
+            partial(
+                write_batch,
+                target_table=config.target_table,
+                checkpoint_path=config.checkpoint_path,
+            )
+        )
+        .start()
+    )
+
+
+def main() -> None:
+    """Runs the silver job until the stream finishes or fails."""
+    configure_logging()
+    args = parse_args("Run a silver job.")
+    config = build_config(args.env)
+
+    spark = SparkSession.builder.getOrCreate()
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+
+    ensure_table_exists(spark, config.target_table)
+
+    df = flatten_events(read_source(spark, config.source_table))
+    query = start_stream(df, config)
+    logger.info(
+        "Started stream",
+        extra={"query_id": str(query.id), "target_table": config.target_table},
+    )
+    query.awaitTermination()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,23 @@
+[project]
+name = "data-generator"
+version = "0.1.0"
+description = "Generates sample data for the pipeline sources."
+authors = [
+    { name = "jduran9987", email = "jduran9987@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.43.125",
+]
+
+[project.scripts]
+generate-orders = "data_generator.generate_orders:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "boto3-stubs[dynamodb]>=1.43.124",
+]

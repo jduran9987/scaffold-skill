@@ -1,0 +1,100 @@
+{
+  "describe-table": {
+    "Table": {
+      "KeySchema": [
+        {
+          "AttributeName": "createdAt",
+          "KeyType": "RANGE"
+        },
+        {
+          "AttributeName": "id",
+          "KeyType": "HASH"
+        }
+      ],
+      "AttributeDefinitions": [
+        {
+          "AttributeName": "id",
+          "AttributeType": "N"
+        },
+        {
+          "AttributeName": "createdAt",
+          "AttributeType": "S"
+        }
+      ]
+    }
+  },
+  "scan": {
+    "Items": [
+      {
+        "id": {
+          "N": "1"
+        },
+        "createdAt": {
+          "S": "2026-11-05T10:00:00Z"
+        },
+        "amount": {
+          "N": "12.50"
+        },
+        "status": {
+          "S": "PENDING"
+        },
+        "addressDetails": {
+          "M": {
+            "city": {
+              "S": "Austin"
+            },
+            "zipCode": {
+              "S": "78701"
+            },
+            "geo": {
+              "M": {
+                "lat": {
+                  "N": "30.2"
+                },
+                "lng": {
+                  "N": "-97.7"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": {
+          "N": "2"
+        },
+        "createdAt": {
+          "S": "2026-11-05T10:00:00Z"
+        },
+        "amount": {
+          "N": "3"
+        },
+        "status": {
+          "NULL": true
+        },
+        "labels": {
+          "SS": [
+            "a"
+          ]
+        }
+      },
+      {
+        "id": {
+          "N": "3"
+        },
+        "createdAt": {
+          "S": "2026-11-05T10:00:00Z"
+        },
+        "amount": {
+          "S": "n/a"
+        },
+        "notes": {
+          "NULL": true
+        },
+        "isGift": {
+          "BOOL": true
+        }
+      }
+    ]
+  }
+}

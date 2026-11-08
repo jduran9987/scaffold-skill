@@ -1,0 +1,135 @@
+bundle:
+  name: orders
+  engine: direct
+
+include:
+  - resource/*.yml
+
+artifacts:
+  orders_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  environment:
+    description: Environment name that replaces {env} in task paths and table names.
+  compute_policy_id:
+    description: ID of the cluster policy the tasks' compute uses.
+  run-as:
+    description: Application ID of the service principal the job runs as.
+  task_failure_webhooks:
+    description: Notification destinations each task alerts when it fails.
+    type: complex
+  task_failure_emails:
+    description: Addresses each task emails when it fails.
+    type: complex
+
+targets:
+  dev:
+    mode: production
+    workspace:
+      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: dev
+      compute_policy_id: "XXXXXXXXX"
+      run-as:
+        lookup:
+          service_principal: "sp_ingestion_dev"
+      task_failure_webhooks:
+        - id: "XXXXXXXXX"
+      task_failure_emails:
+        - "jduran9987@gmail.com"
+    run_as:
+      service_principal_name: "${var.run-as}"
+    permissions:
+      - service_principal_name: "${var.run-as}"
+        level: CAN_MANAGE
+      - group_name: "data_engineers"
+        level: CAN_MANAGE
+      - group_name: "admins"
+        level: CAN_MANAGE
+      - group_name: "data_analysts"
+        level: CAN_RUN
+
+  qa:
+    mode: production
+    workspace:
+      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: qa
+      compute_policy_id: "XXXXXXXXX"
+      run-as:
+        lookup:
+          service_principal: "sp_ingestion_qa"
+      task_failure_webhooks:
+        - id: "XXXXXXXXX"
+      task_failure_emails:
+        - "jduran9987@gmail.com"
+    run_as:
+      service_principal_name: "${var.run-as}"
+    permissions:
+      - service_principal_name: "${var.run-as}"
+        level: CAN_MANAGE
+      - group_name: "data_engineers"
+        level: CAN_MANAGE
+      - group_name: "admins"
+        level: CAN_MANAGE
+      - group_name: "data_analysts"
+        level: CAN_RUN
+
+  uat:
+    mode: production
+    workspace:
+      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: uat
+      compute_policy_id: "XXXXXXXXX"
+      run-as:
+        lookup:
+          service_principal: "sp_ingestion_uat"
+      task_failure_webhooks:
+        - id: "XXXXXXXXX"
+      task_failure_emails:
+        - "jduran9987@gmail.com"
+    run_as:
+      service_principal_name: "${var.run-as}"
+    permissions:
+      - service_principal_name: "${var.run-as}"
+        level: CAN_MANAGE
+      - group_name: "data_engineers"
+        level: CAN_MANAGE
+      - group_name: "admins"
+        level: CAN_MANAGE
+      - group_name: "data_analysts"
+        level: CAN_RUN
+
+  prod:
+    mode: production
+    workspace:
+      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: prod
+      compute_policy_id: "XXXXXXXXX"
+      run-as:
+        lookup:
+          service_principal: "sp_ingestion_prod"
+      task_failure_webhooks:
+        - id: "XXXXXXXXX"
+      task_failure_emails:
+        - "jduran9987@gmail.com"
+    run_as:
+      service_principal_name: "${var.run-as}"
+    permissions:
+      - service_principal_name: "${var.run-as}"
+        level: CAN_MANAGE
+      - group_name: "data_engineers"
+        level: CAN_MANAGE
+      - group_name: "admins"
+        level: CAN_MANAGE
+      - group_name: "data_analysts"
+        level: CAN_RUN

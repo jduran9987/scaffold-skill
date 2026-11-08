@@ -1,0 +1,73 @@
+resources:
+  jobs:
+    {{ job_key }}:
+      name: "[${bundle.target}] {{ metadata.name }}"
+      description: >-
+        {{ description | wordwrap(78, break_long_words=False) | indent(8) }}
+      max_concurrent_runs: 1
+{% if job.execution_mode == "continuous" %}
+      continuous:
+        pause_status: PAUSED
+        task_retry_mode: ON_FAILURE
+{% else %}
+      schedule:
+        quartz_cron_expression: {{ job.batch_schedule | yaml_string }}
+        timezone_id: UTC
+        pause_status: PAUSED
+{% endif %}
+      queue:
+        enabled: true
+{% if bundle.tags %}
+      tags:
+{% for key, value in bundle.tags.items() %}
+        {{ key }}: {{ value | yaml_string }}
+{% endfor %}
+{% endif %}
+      email_notifications:
+        on_failure:
+{% for email in bundle.on_job_failure_emails %}
+          - {{ email | yaml_string }}
+{% endfor %}
+      webhook_notifications:
+        on_failure:
+{% for webhook_id in bundle.on_job_failure_webhook_notification_ids %}
+          - id: {{ webhook_id | yaml_string }}
+{% endfor %}
+      notification_settings:
+        no_alert_for_skipped_runs: false
+      timeout_seconds: 0
+
+      job_clusters:
+        - job_cluster_key: {{ cluster_key }}
+          new_cluster:
+            policy_id: ${var.compute_policy_id}
+            apply_policy_default_values: true
+            custom_tags:
+              environment: ${var.environment}
+
+      tasks:
+{% for task_key in task_keys %}
+        - task_key: {{ task_key }}
+{% if job.execution_mode == "batch" and not loop.first %}
+          depends_on:
+            - task_key: {{ loop.previtem }}
+{% endif %}
+          job_cluster_key: {{ cluster_key }}
+          python_wheel_task:
+            package_name: {{ package_name }}
+            entry_point: {{ task_key }}
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
+{% endfor %}

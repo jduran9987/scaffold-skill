@@ -1,0 +1,149 @@
+version: v1
+
+metadata:
+  name: orders
+  description: Pipeline to ingest orders.
+  pythonVersion: "3.12"
+  uvBuildVersion: ">=0.13.7,<0.14.0"
+
+bundle:
+  onJobFailureWebhookNotificationIds:
+    - "XXXXXXXXX"
+  onJobFailureEmails:
+    - "jduran9987@gmail.com"
+  tags:
+    project: orders
+    SOURCE: dynamo
+  targets:
+    - dev:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_dev"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_dev"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - qa:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_qa"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_qa"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - uat:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_uat"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_uat"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+    - prod:
+        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        servicePrincipal: "sp_ingestion_prod"
+        computePolicy: "XXXXXXXXX"
+        onTaskFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onTaskFailureEmails:
+          - "jduran9987@gmail.com"
+        permissions:
+          canManage:
+            servicePrincipal:
+              - "sp_ingestion_prod"
+            groups:
+              - "data_engineers"
+              - "admins"
+          canRun:
+            groups:
+              - "data_analysts"
+
+job:
+  executionMode: "continuous"
+  bronze:
+    sourcePath: "s3://{env}-datalake-7472/scaffoldskill/data/"
+    checkpointPath: "s3://{env}-datalake-7472/scaffoldskill/bronze/checkpoint/"
+    targetTable: "{env}.bronze.orders"
+    triggerInterval: "1 minute"
+  silver:
+    checkpointPath: "s3://{env}-datalake-7472/scaffoldskill/silver/checkpoint/"
+    targetTable: "{env}.silver.orders"
+    triggerInterval: "1 minute"
+  gold:
+    upsertLatestKey: _event_timestamp
+    checkpointPath: "s3://{env}-datalake-7472/scaffoldskill/gold/checkpoint/"
+    targetTable: "{env}.gold.orders"
+    triggerInterval: "1 minute"
+
+schema:
+  columns:
+    - name: id
+      description: "Order identifier."
+      dynamoType: N
+      targetType: int
+      path: id
+      key: true
+    - name: created_at 
+      description: "UTC timestamp when an order was created."
+      dynamoType: S
+      targetType: timestamp
+      path: createdAt
+      key: true
+    - name: amount
+      description: "Order amount in dollars."
+      dynamoType: N
+      targetType: decimal(22, 2) 
+      path: amount 
+    - name: status
+      description: "Order status."
+      dynamoType: S
+      targetType: string
+      path: status 
+    - name: address__city
+      description: "City from where the order was placed."
+      dynamoType: S
+      targetType: string
+      path: addressDetails.M.city
+    - name: address__state
+      description: "State from where the order was placed."
+      dynamoType: S
+      targetType: string
+      path: addressDetails.M.state
+    - name: address__zip_code
+      description: "Zip code from where the order was placed."
+      dynamoType: S
+      targetType: string
+      path: addressDetails.M.zipCode
+  primaryKeys:
+    - id
+    - created_at

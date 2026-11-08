@@ -1,0 +1,95 @@
+resources:
+  jobs:
+    orders:
+      name: "[${bundle.target}] orders"
+      description: >-
+        Pipeline to ingest orders. The bronze task appends raw source records to a
+        Delta table as they arrive, along with ingestion and source file metadata. The
+        silver task flattens bronze records into typed columns, one row per change
+        event. The gold task merges each change into a Delta table that keeps the
+        latest version of every primary key.
+      max_concurrent_runs: 1
+      continuous:
+        pause_status: PAUSED
+        task_retry_mode: ON_FAILURE
+      queue:
+        enabled: true
+      tags:
+        project: "orders"
+        SOURCE: "dynamo"
+      email_notifications:
+        on_failure:
+          - "jduran9987@gmail.com"
+      webhook_notifications:
+        on_failure:
+          - id: "XXXXXXXXX"
+      notification_settings:
+        no_alert_for_skipped_runs: false
+      timeout_seconds: 0
+
+      job_clusters:
+        - job_cluster_key: orders_cluster
+          new_cluster:
+            policy_id: ${var.compute_policy_id}
+            apply_policy_default_values: true
+            custom_tags:
+              environment: ${var.environment}
+
+      tasks:
+        - task_key: bronze
+          job_cluster_key: orders_cluster
+          python_wheel_task:
+            package_name: orders
+            entry_point: bronze
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
+        - task_key: silver
+          job_cluster_key: orders_cluster
+          python_wheel_task:
+            package_name: orders
+            entry_point: silver
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
+        - task_key: gold
+          job_cluster_key: orders_cluster
+          python_wheel_task:
+            package_name: orders
+            entry_point: gold
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
