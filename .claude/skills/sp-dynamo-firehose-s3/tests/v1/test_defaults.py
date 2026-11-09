@@ -126,6 +126,7 @@ def test_test_copy_matches_packaged_keys():
 
 CUSTOM = (
     TEST_COPY.replace('aws_profile = "default"', 'aws_profile = "data-team"')
+    .replace('pipelines_dir = "pipelines"', 'pipelines_dir = "yamls"')
     .replace('projects_dir = "dabs"', 'projects_dir = "bundles"')
     .replace('python_version = "3.12"', 'python_version = "3.13"')
     .replace(
@@ -185,10 +186,11 @@ def test_changed_defaults_flow_into_scaffold(tmp_path):
 
 
 def test_changed_defaults_flow_into_generate_yaml(tmp_path):
-    result = run_skill(tmp_path, CUSTOM, "generate-yaml", "new.yaml")
+    result = run_skill(tmp_path, CUSTOM, "generate-yaml", "new.table")
 
     assert result.returncode == 0, result.stderr
-    config = yaml.safe_load((tmp_path / "new.yaml").read_text())
+    config = yaml.safe_load((tmp_path / "yamls" / "new-table.yaml").read_text())
+    assert config["metadata"]["name"] == "new-table"
     assert config["metadata"]["pythonVersion"] == "3.13"
     targets = {
         name: t for entry in config["bundle"]["targets"] for name, t in entry.items()
@@ -203,10 +205,10 @@ def test_batch_default_changes_which_fields_are_commented_out(tmp_path):
         'execution_mode = "continuous"', 'execution_mode = "batch"'
     )
 
-    result = run_skill(tmp_path, text, "generate-yaml", "new.yaml")
+    result = run_skill(tmp_path, text, "generate-yaml", "orders")
 
     assert result.returncode == 0, result.stderr
-    source = (tmp_path / "new.yaml").read_text()
+    source = (tmp_path / "pipelines" / "orders.yaml").read_text()
     assert '  batchSchedule: ""  # Required field, please fill.\n' in source
     assert "0 0 2 * * ?" not in source
     assert '    # triggerInterval: "1 minute"' in source
@@ -233,7 +235,7 @@ def test_generate_yaml_runs_the_aws_cli_with_the_defaults_profile(tmp_path):
         tmp_path,
         CUSTOM,
         "generate-yaml",
-        "orders.yaml",
+        "orders",
         path=f"{wrapper.parent}{os.pathsep}{os.environ['PATH']}",
     )
 
@@ -245,12 +247,12 @@ def test_generate_yaml_runs_the_aws_cli_with_the_defaults_profile(tmp_path):
 
 
 def test_generate_yaml_without_the_aws_cli_fails(tmp_path):
-    result = run_skill(tmp_path, TEST_COPY, "generate-yaml", "orders.yaml", path="")
+    result = run_skill(tmp_path, TEST_COPY, "generate-yaml", "orders", path="")
 
     assert result.returncode == 1
     assert "Result: AWS_CLI_MISSING\n" in result.stdout
     assert "AWS CLI is not installed" in result.stdout
-    assert not (tmp_path / "orders.yaml").exists()
+    assert not (tmp_path / "pipelines").exists()
 
 
 def test_tests_use_the_test_copy_of_the_defaults():

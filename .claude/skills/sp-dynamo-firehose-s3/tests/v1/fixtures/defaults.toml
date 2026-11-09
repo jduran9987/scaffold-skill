@@ -11,6 +11,8 @@ aws_profile = "default"
 aws_region = "us-east-1"
 # Items `generate-yaml` scans to infer the schema.
 sample_size = 100
+# `generate-yaml <table>` writes <pipelines_dir>/<table, hyphenated>.yaml.
+pipelines_dir = "pipelines"
 # `scaffold` writes each project to <projects_dir>/<metadata.name>/ unless
 # --output-dir is passed.
 projects_dir = "dabs"

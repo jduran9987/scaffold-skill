@@ -218,16 +218,11 @@ def test_missing_aws_cli_is_reported(fake_aws):
         inference.infer_table_schema("orders")
 
 
-def test_action_reads_the_table_named_after_the_file(tmp_path, fake_aws):
-    assert main(["generate-yaml", str(tmp_path / "pipelines" / "orders.yaml")]) == 0
+def test_action_writes_the_inferred_schema(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "pipelines" / "orders.yaml"
 
-    assert {call[4] for call in fake_aws.calls} == {"orders"}
-
-
-def test_action_writes_the_inferred_schema(tmp_path):
-    path = tmp_path / "orders.yaml"
-
-    assert main(["generate-yaml", str(path)]) == 0
+    assert main(["generate-yaml", "orders"]) == 0
 
     source = path.read_text()
     schema = yaml.safe_load(source)["schema"]
@@ -249,14 +244,15 @@ def test_action_writes_the_inferred_schema(tmp_path):
 @pytest.mark.parametrize("option", [["--profile", "dev"], ["--infer-schema", "t"]])
 def test_removed_options_are_rejected(tmp_path, option):
     with pytest.raises(SystemExit):
-        main(["generate-yaml", str(tmp_path / "o.yaml"), *option])
+        main(["generate-yaml", "orders", *option])
 
 
-def test_aws_failure_writes_nothing(tmp_path, fake_aws, capsys):
+def test_aws_failure_writes_nothing(tmp_path, monkeypatch, fake_aws, capsys):
+    monkeypatch.chdir(tmp_path)
     fake_aws.result = subprocess.CompletedProcess([], 254, stderr="Table not found")
-    path = tmp_path / "orders.yaml"
+    path = tmp_path / "pipelines" / "orders.yaml"
 
-    assert main(["generate-yaml", str(path)]) == 1
+    assert main(["generate-yaml", "orders"]) == 1
 
     output = capsys.readouterr().out
     assert "Result: AWS_ERROR\n" in output
@@ -264,9 +260,10 @@ def test_aws_failure_writes_nothing(tmp_path, fake_aws, capsys):
     assert not path.exists()
 
 
-def test_filled_inferred_yaml_scaffolds(tmp_path):
-    path = tmp_path / "orders.yaml"
-    main(["generate-yaml", str(path)])
+def test_filled_inferred_yaml_scaffolds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "pipelines" / "orders.yaml"
+    main(["generate-yaml", "orders"])
     config = yaml.safe_load(path.read_text())
     orders = yaml.safe_load((FIXTURES / "orders.yaml").read_text())
     config["metadata"].update(name="orders", description="Orders.")

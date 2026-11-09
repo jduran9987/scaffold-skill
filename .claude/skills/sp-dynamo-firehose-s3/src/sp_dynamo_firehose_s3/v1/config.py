@@ -473,7 +473,7 @@ class Column(StrictModel):
         target_type: Spark SQL type to cast the value to. Must suit the DynamoDB
             type; maps and lists keep DynamoDB's typed JSON.
         path: Dot-separated attribute path as it appears in the DynamoDB payload,
-            including the `M` level of nested maps. Defaults to the column name.
+            including the `M` level of nested maps.
         key: Whether the attribute is part of the DynamoDB table's key.
     """
 
@@ -481,22 +481,20 @@ class Column(StrictModel):
     description: NonEmptyString | None = None
     dynamo_type: DynamoType
     target_type: TargetType
-    path: AttributePath | None = None
+    path: AttributePath
     key: bool = False
 
     @model_validator(mode="after")
     def check_column(self) -> Self:
-        """Defaults the path and checks the types and key settings.
+        """Checks the types and key settings.
 
         Returns:
-            The validated model, with the path set.
+            The validated model.
 
         Raises:
             ValueError: If the target type does not suit the DynamoDB type, or a
                 key attribute is nested or not a string, number, or binary.
         """
-        if self.path is None:
-            self.path = self.name
         pattern, allowed = TARGET_TYPE_RULES[self.dynamo_type]
         if not re.fullmatch(pattern, self.target_type):
             raise ValueError(

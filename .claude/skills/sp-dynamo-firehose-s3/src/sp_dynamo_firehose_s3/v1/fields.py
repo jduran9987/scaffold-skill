@@ -52,6 +52,8 @@ TableName = Annotated[
     StringConstraints(pattern=r"^[^.\s]+\.[^.\s]+\.[^.\s]+$"),
     AfterValidator(check_placeholders),
 ]
+# DynamoDB table names.
+DYNAMO_TABLE_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{3,255}")
 PIPELINE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]*")
 PipelineName = Annotated[
     str, StringConstraints(pattern=rf"^{PIPELINE_NAME_PATTERN.pattern}$")

@@ -12,7 +12,6 @@ and next step, so the output is the same for the same AWS state.
 """
 
 import json
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,10 +20,9 @@ from typing import Any
 
 from sp_dynamo_firehose_s3.v1.aws import AwsError, AwsErrorKind, run_aws
 from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS
+from sp_dynamo_firehose_s3.v1.fields import DYNAMO_TABLE_NAME_PATTERN
 from sp_dynamo_firehose_s3.v1.report import format_report, format_result
 
-# DynamoDB table names, which also name the Kinesis stream.
-TABLE_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{3,255}")
 DELIVERY_STREAM_SUFFIX = "-firehose"
 MAX_DELIVERY_STREAM_NAME_LENGTH = 64
 S3_PREFIX_ROOT = "firehose-stream"
@@ -266,7 +264,7 @@ def table_name_problem(table: str) -> str | None:
     Returns:
         Why the name cannot be used, or None if it can.
     """
-    if not TABLE_NAME_PATTERN.fullmatch(table):
+    if not DYNAMO_TABLE_NAME_PATTERN.fullmatch(table):
         return "use 3 to 255 letters, digits, underscores, dashes, or dots"
     name = delivery_stream_name(table)
     if len(name) > MAX_DELIVERY_STREAM_NAME_LENGTH:

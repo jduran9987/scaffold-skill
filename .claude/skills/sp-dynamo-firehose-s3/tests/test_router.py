@@ -66,17 +66,18 @@ def test_usage_errors_come_from_the_latest_version(capsys):
 def test_yaml_that_does_not_exist_goes_to_the_latest_version(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setitem(router.VERSIONS, "v1", lambda args: calls.append(args) or 0)
-    argv = ["generate-yaml", str(tmp_path / "new.yaml")]
+    argv = ["scaffold", str(tmp_path / "new.yaml")]
 
     assert router.main(argv) == 0
     assert calls == [argv]
 
 
-def test_generate_yaml_runs_end_to_end(tmp_path):
-    path = tmp_path / "new.yaml"
+def test_generate_yaml_runs_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
-    assert router.main(["generate-yaml", str(path)]) == 0
-    assert path.read_text().startswith("version: v1\n")
+    assert router.main(["generate-yaml", "orders"]) == 0
+    text = (tmp_path / "pipelines" / "orders.yaml").read_text()
+    assert text.startswith("version: v1\n")
 
 
 def test_table_names_go_to_the_latest_version(tmp_path, monkeypatch):

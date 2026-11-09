@@ -129,27 +129,60 @@ def test_unfilled_template_fails_on_required_fields(tmp_path, config):
         assert field in message
 
 
-def test_action_writes_the_template(tmp_path, capsys, template):
-    path = tmp_path / "pipelines" / "orders.yaml"
+def test_action_writes_the_template(tmp_path, monkeypatch, capsys, template):
+    monkeypatch.chdir(tmp_path)
 
-    assert main(["generate-yaml", str(path)]) == 0
+    assert main(["generate-yaml", "orders"]) == 0
 
-    assert path.read_text() == template
+    assert (tmp_path / "pipelines" / "orders.yaml").read_text() == template
     assert capsys.readouterr().out == (
-        f"generate-yaml {path}\n"
+        "generate-yaml orders\n"
         "Result: GENERATED\n"
-        f"  Wrote {path} with every supported field and 11 columns inferred from "
-        "DynamoDB table orders.\n"
+        "  Wrote pipelines/orders.yaml with every supported field and 11 columns "
+        "inferred from DynamoDB table orders.\n"
         "Next step: Fill in the fields marked `# Required field, please fill.`, "
-        f"including each column's targetType, then run scaffold {path}.\n"
+        "including each column's targetType, then run scaffold "
+        "pipelines/orders.yaml.\n"
     )
 
 
-def test_action_does_not_overwrite_without_force(tmp_path, capsys):
-    path = tmp_path / "customers.yaml"
+@pytest.mark.parametrize(
+    ("table", "file_name"),
+    [
+        ("orders", "orders.yaml"),
+        ("bo.accounts", "bo-accounts.yaml"),
+        ("BO_Accounts", "bo-accounts.yaml"),
+        ("1orders", "1orders.yaml"),
+    ],
+)
+def test_file_is_named_after_the_table(
+    tmp_path, monkeypatch, fake_aws, table, file_name
+):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["generate-yaml", table]) == 0
+
+    assert [path.name for path in (tmp_path / "pipelines").iterdir()] == [file_name]
+    assert {call[4] for call in fake_aws.calls} == {table}
+
+
+def test_invalid_table_name_writes_nothing(tmp_path, monkeypatch, fake_aws, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["generate-yaml", "a b"]) == 1
+
+    assert "Result: INVALID_TABLE_NAME\n" in capsys.readouterr().out
+    assert fake_aws.calls == []
+    assert not (tmp_path / "pipelines").exists()
+
+
+def test_action_does_not_overwrite_without_force(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "pipelines" / "customers.yaml"
+    path.parent.mkdir()
     path.write_text("custom")
 
-    assert main(["generate-yaml", str(path)]) == 1
+    assert main(["generate-yaml", "customers"]) == 1
 
     assert path.read_text() == "custom"
     output = capsys.readouterr().out
@@ -157,19 +190,21 @@ def test_action_does_not_overwrite_without_force(tmp_path, capsys):
     assert "Next step: Rerun with --force to overwrite it.\n" in output
 
 
-def test_action_overwrites_with_force(tmp_path, template):
-    path = tmp_path / "orders.yaml"
+def test_action_overwrites_with_force(tmp_path, monkeypatch, template):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "pipelines" / "orders.yaml"
+    path.parent.mkdir()
     path.write_text("custom")
 
-    assert main(["generate-yaml", str(path), "--force"]) == 0
+    assert main(["generate-yaml", "orders", "--force"]) == 0
 
     assert path.read_text() == template
 
 
-def test_duplicate_column_names_are_called_out(tmp_path, fake_aws, capsys):
+def test_duplicate_column_names_are_called_out(tmp_path, monkeypatch, fake_aws, capsys):
+    monkeypatch.chdir(tmp_path)
     items = fake_aws_items_with_collision()
     fake_aws.result = None
-    path = tmp_path / "orders.yaml"
     original = fake_aws.run
 
     def run(command, **kwargs):
@@ -181,7 +216,7 @@ def test_duplicate_column_names_are_called_out(tmp_path, fake_aws, capsys):
 
     fake_aws.run = run
 
-    assert main(["generate-yaml", str(path)]) == 0
+    assert main(["generate-yaml", "orders"]) == 0
     assert (
         "Columns named zip_code come from more than one path; rename them."
         in capsys.readouterr().out
@@ -199,12 +234,13 @@ def fake_aws_items_with_collision():
     ]
 
 
-def test_missing_table_has_a_fixed_result(tmp_path, fake_aws, capsys):
+def test_missing_table_has_a_fixed_result(tmp_path, monkeypatch, fake_aws, capsys):
+    monkeypatch.chdir(tmp_path)
     fake_aws.result = subprocess.CompletedProcess(
         [], 254, stderr="An error occurred (ResourceNotFoundException): not found"
     )
 
-    assert main(["generate-yaml", str(tmp_path / "missing.yaml")]) == 1
+    assert main(["generate-yaml", "missing"]) == 1
     output = capsys.readouterr().out
     assert "Result: TABLE_NOT_FOUND\n" in output
     assert "DynamoDB table missing does not exist in us-east-1" in output

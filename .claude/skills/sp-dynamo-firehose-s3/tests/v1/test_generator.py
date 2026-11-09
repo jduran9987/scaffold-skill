@@ -954,10 +954,18 @@ def load_silver_columns(raw_config, tmp_path):
     return {column.name: column for column in namespace["COLUMNS"]}
 
 
-def test_column_path_defaults_to_name(raw_config, tmp_path):
+def test_column_path_is_required(raw_config, tmp_path):
     del raw_config["schema"]["columns"][3]["path"]
 
-    assert load_silver_columns(raw_config, tmp_path)["status"].path == "status"
+    with pytest.raises(ValidationError, match=r"columns\.3\.path"):
+        generate(raw_config, tmp_path)
+
+
+def test_null_column_path_counts_as_missing(raw_config, tmp_path):
+    raw_config["schema"]["columns"][3]["path"] = None
+
+    with pytest.raises(ValidationError, match="Field required"):
+        generate(raw_config, tmp_path)
 
 
 def test_column_description_is_optional(raw_config, tmp_path):

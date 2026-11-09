@@ -36,7 +36,7 @@ Typical flow:
 
 ```
 /sp-dynamo-firehose-s3 create-stream orders
-/sp-dynamo-firehose-s3 generate-yaml pipelines/orders.yaml
+/sp-dynamo-firehose-s3 generate-yaml orders
 # review and fill in pipelines/orders.yaml
 /sp-dynamo-firehose-s3 scaffold pipelines/orders.yaml
 ```
@@ -159,26 +159,35 @@ Result codes:
 ### generate-yaml
 
 ```
-generate-yaml <path-to-yaml> [--force]
+generate-yaml <dynamodb-table> [--force]
 ```
 
 | Input | Description |
 |---|---|
-| `<path-to-yaml>` | Path of the YAML to create. |
-| `--force` | Overwrite the file if it exists. |
+| `<dynamodb-table>` | Existing DynamoDB table to infer the schema from. Its exact name. |
+| `--force` | Overwrite the YAML if it exists. |
 
-> **The file name is the DynamoDB table name.** `pipelines/orders.yaml` reads the
-> `orders` table. If no table with that name exists in the configured region, the
-> run ends with `TABLE_NOT_FOUND` and writes nothing.
+> **The table must exist.** If no table with that name exists in the configured
+> region, the run ends with `TABLE_NOT_FOUND` and writes nothing.
+
+Output path: `./pipelines/<table>.yaml`, with the table name lowercased and every
+character that is not a letter or digit replaced by a hyphen. The `pipelines`
+directory is set in `defaults.toml` and is created if it does not exist.
+
+| Table | YAML |
+|---|---|
+| `orders` | `pipelines/orders.yaml` |
+| `bo.accounts` | `pipelines/bo-accounts.yaml` |
+| `BO_Accounts` | `pipelines/bo-accounts.yaml` |
 
 What it writes:
 
 - Every supported field. Fields with defaults show their default values.
 - Required fields without a value are `""` and marked
   `# Required field, please fill.`
-- `metadata.name` comes from the file name: letters are lowercased and every other
-  character becomes a hyphen (`bo.accounts.yaml` → `bo-accounts`). If the result is
-  not a valid name, it is left `""` and marked required.
+- `metadata.name` is the same hyphenated table name (`bo.accounts` →
+  `bo-accounts`). If that is not a valid name, such as one starting with a digit,
+  it is left `""` and marked required.
 - Fields for the execution mode that is not the default are commented out.
   `batchSchedule` shows a sample Quartz expression.
 - A `schema` section inferred from the table.
@@ -205,8 +214,9 @@ Result codes:
 | Code | Meaning |
 |---|---|
 | `GENERATED` | The file was written. |
+| `INVALID_TABLE_NAME` | The argument is not a DynamoDB table name. Nothing was written. |
 | `FILE_EXISTS` | The file exists. Nothing was written. Rerun with `--force` to overwrite. |
-| `TABLE_NOT_FOUND` | No DynamoDB table matches the file name. Nothing was written. |
+| `TABLE_NOT_FOUND` | The DynamoDB table does not exist in the configured region. Nothing was written. |
 | `KEY_NOT_USABLE` | A key attribute's name cannot be a column. Nothing was written. |
 | `WRITE_FAILED` | The file could not be written. |
 
@@ -221,7 +231,7 @@ scaffold <path-to-yaml> [--output-dir <path>] [--force]
 | Input | Description |
 |---|---|
 | `<path-to-yaml>` | A filled-in pipeline YAML. See [YAML reference](#yaml-reference). |
-| `--output-dir` | Project directory. Defaults to `./<projects dir>/<metadata.name>/`, with the projects dir set in `defaults.toml`. |
+| `--output-dir` | Project directory. Defaults to `./dabs/<metadata.name>/`. The `dabs` directory is set in `defaults.toml`. |
 | `--force` | Overwrite existing generated files. |
 
 - The YAML is fully validated before anything is written. On a validation error,
@@ -296,7 +306,7 @@ there.
 
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `name` | string: `[a-z][a-z0-9_-]*` | Yes | — | Pipeline name. Names the project directory, package, and job. `generate-yaml` fills it from the file name. |
+| `name` | string: `[a-z][a-z0-9_-]*` | Yes | — | Pipeline name. Names the project directory, package, and job. `generate-yaml` fills it from the table name. |
 | `description` | string | Yes | — | What the pipeline does. Starts the job and table descriptions. |
 | `pythonVersion` | string: `"3.N"` | No | defaults.toml | Python version of the generated project. |
 | `uvBuildVersion` | string: `">=X.Y.Z,<X.Y.Z"` | No | defaults.toml | Version range of the `uv_build` backend. |
@@ -408,11 +418,11 @@ Required when `job.silver` is set.
 
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `name` | string: `[A-Za-z][A-Za-z0-9_]*` | Yes | — | Column name. Unique. |
+| `name` | string: `[A-Za-z][A-Za-z0-9_]*` | Yes | — | Column name. Unique. `generate-yaml` fills it from `path`: each level in snake_case, joined by `__` (`addressDetails.M.zipCode` → `address_details__zip_code`). |
 | `description` | string | No | — | Column comment in the DDL. |
 | `dynamoType` | `S` `N` `B` `BOOL` `NULL` `M` `L` `SS` `NS` `BS` | Yes | — | DynamoDB type of the attribute. |
 | `targetType` | string: Spark SQL type | Yes | — | Type the value is cast to. Must suit `dynamoType` (table below). |
-| `path` | string: dot path | No | `name` | Attribute path in the DynamoDB item. Nested maps include the `M` level. |
+| `path` | string: dot path | Yes | — | Attribute path in the DynamoDB item. Nested maps include the `M` level, such as `addressDetails.M.zipCode`. |
 | `key` | boolean | No | `false` | Whether the attribute is part of the table's key. Key columns are read from the event's keys, so they are present on deletes. |
 
 Key columns must have a top-level `path` and `dynamoType` `S`, `N`, or `B`.
@@ -461,6 +471,7 @@ schema:
       description: "Order identifier."
       dynamoType: N
       targetType: int
+      path: id
       key: true
     - name: created_at
       dynamoType: S

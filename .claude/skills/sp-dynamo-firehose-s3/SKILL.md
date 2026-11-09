@@ -69,21 +69,23 @@ pipeline code by hand.
 
 ### generate-yaml
 
-Usage: `generate-yaml <path-to-yaml> [--force]`
+Usage: `generate-yaml <dynamodb-table> [--force]`
 
-Writes a pipeline YAML with every supported field, including a `schema` section
-inferred from the DynamoDB table named after the file (`orders.yaml` reads the
-`orders` table), for the user to fill in before running `scaffold`. The command
+Writes `./pipelines/<table>.yaml`, with the table name lowercased and every
+character that is not a letter or digit replaced by a hyphen (`bo.accounts`
+becomes `pipelines/bo-accounts.yaml`). The YAML has every supported field,
+including a `schema` section inferred from the table, for the user to fill in
+before running `scaffold`. Pass the table name exactly as the user gives it. The command
 writes the whole file, so do not write, complete, or edit the YAML yourself, and
 do not suggest a schema from your own knowledge of the table.
 
 Fields with defaults in the defaults file are filled with them, including each
 layer's `checkpointPath` and `targetTable` when those defaults are set.
-`metadata.name` comes from the file name: letters are lowercased and every other
-character becomes a hyphen, so `bo.accounts.yaml` gets `bo-accounts`. Required
+`metadata.name` is the same hyphenated name, so `bo.accounts` gets
+`bo-accounts`. Required
 fields without a value are `""` and marked `# Required field, please fill.`
 
-Result codes: `GENERATED`, `FILE_EXISTS`, `TABLE_NOT_FOUND`, `KEY_NOT_USABLE`,
+Result codes: `GENERATED`, `INVALID_TABLE_NAME`, `FILE_EXISTS`, `TABLE_NOT_FOUND`, `KEY_NOT_USABLE`,
 `WRITE_FAILED`, and the AWS codes below. Only `GENERATED` writes the file.
 
 For `FILE_EXISTS`, ask the user before rerunning with `--force`, which overwrites

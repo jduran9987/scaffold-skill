@@ -62,12 +62,14 @@ class CliDefaults(DefaultsModel):
         aws_profile: AWS CLI profile every AWS command uses.
         aws_region: AWS region every AWS command uses.
         sample_size: Items scanned to infer a schema.
+        pipelines_dir: Directory `generate-yaml` writes pipeline YAMLs to.
         projects_dir: Directory `scaffold` writes projects under.
     """
 
     aws_profile: NonEmptyString
     aws_region: AwsRegion
     sample_size: Annotated[int, Field(gt=0)]
+    pipelines_dir: NonEmptyString
     projects_dir: NonEmptyString
 
 

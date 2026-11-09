@@ -463,6 +463,18 @@ DESCRIPTION_PLACEHOLDER = "Please fill or remove."
 SAMPLE_BATCH_SCHEDULE = "0 0 2 * * ?"
 
 
+def hyphenate(table: str) -> str:
+    """Lowercases a table name and turns every other character into a hyphen.
+
+    Args:
+        table: DynamoDB table name, such as `BO.Accounts`.
+
+    Returns:
+        The hyphenated name, such as `bo-accounts`.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", table).lower()
+
+
 def default_pipeline_name(table: str) -> str:
     """Derives the pipeline name from the DynamoDB table name.
 
@@ -476,7 +488,7 @@ def default_pipeline_name(table: str) -> str:
         The pipeline name, or an empty string if the result is not a valid
         pipeline name, such as one that starts with a digit or hyphen.
     """
-    name = re.sub(r"[^A-Za-z0-9]", "-", table).lower()
+    name = hyphenate(table)
     return name if PIPELINE_NAME_PATTERN.fullmatch(name) else ""
 
 
