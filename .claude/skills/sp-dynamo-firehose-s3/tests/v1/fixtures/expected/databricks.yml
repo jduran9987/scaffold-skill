@@ -18,12 +18,22 @@ variables:
     description: ID of the cluster policy the tasks' compute uses.
   run-as:
     description: Application ID of the service principal the job runs as.
+  job_failure_webhooks:
+    description: Notification destinations the job alerts when a run fails. Set only by prod.
+    type: complex
+    default: []
+  job_failure_emails:
+    description: Addresses the job emails when a run fails. Set only by prod.
+    type: complex
+    default: []
   task_failure_webhooks:
-    description: Notification destinations each task alerts when it fails.
+    description: Notification destinations each task alerts when it fails. Set only by prod.
     type: complex
+    default: []
   task_failure_emails:
-    description: Addresses each task emails when it fails.
+    description: Addresses each task emails when it fails. Set only by prod.
     type: complex
+    default: []
 
 targets:
   dev:
@@ -37,10 +47,6 @@ targets:
       run-as:
         lookup:
           service_principal: "sp_ingestion_dev"
-      task_failure_webhooks:
-        - id: "XXXXXXXXX"
-      task_failure_emails:
-        - "jduran9987@gmail.com"
     run_as:
       service_principal_name: "${var.run-as}"
     permissions:
@@ -64,10 +70,6 @@ targets:
       run-as:
         lookup:
           service_principal: "sp_ingestion_qa"
-      task_failure_webhooks:
-        - id: "XXXXXXXXX"
-      task_failure_emails:
-        - "jduran9987@gmail.com"
     run_as:
       service_principal_name: "${var.run-as}"
     permissions:
@@ -91,10 +93,6 @@ targets:
       run-as:
         lookup:
           service_principal: "sp_ingestion_uat"
-      task_failure_webhooks:
-        - id: "XXXXXXXXX"
-      task_failure_emails:
-        - "jduran9987@gmail.com"
     run_as:
       service_principal_name: "${var.run-as}"
     permissions:
@@ -118,6 +116,10 @@ targets:
       run-as:
         lookup:
           service_principal: "sp_ingestion_prod"
+      job_failure_webhooks:
+        - id: "XXXXXXXXX"
+      job_failure_emails:
+        - "jduran9987@gmail.com"
       task_failure_webhooks:
         - id: "XXXXXXXXX"
       task_failure_emails:

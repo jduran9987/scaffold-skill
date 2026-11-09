@@ -11,6 +11,7 @@ artifacts:
     build: uv build --wheel
     path: .
 
+{% set prod = bundle.targets[notification_target] %}
 variables:
   environment:
     description: Environment name that replaces {env} in task paths and table names.
@@ -18,12 +19,30 @@ variables:
     description: ID of the cluster policy the tasks' compute uses.
   run-as:
     description: Application ID of the service principal the job runs as.
+{% if prod.on_job_failure_webhook_notification_ids %}
+  job_failure_webhooks:
+    description: Notification destinations the job alerts when a run fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+{% if prod.on_job_failure_emails %}
+  job_failure_emails:
+    description: Addresses the job emails when a run fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+{% if prod.on_task_failure_webhook_notification_ids %}
   task_failure_webhooks:
-    description: Notification destinations each task alerts when it fails.
+    description: Notification destinations each task alerts when it fails. Set only by prod.
     type: complex
+    default: []
+{% endif %}
+{% if prod.on_task_failure_emails %}
   task_failure_emails:
-    description: Addresses each task emails when it fails.
+    description: Addresses each task emails when it fails. Set only by prod.
     type: complex
+    default: []
+{% endif %}
 
 targets:
 {% for name, target in bundle.targets.items() %}
@@ -38,14 +57,30 @@ targets:
       run-as:
         lookup:
           service_principal: {{ target.service_principal | yaml_string }}
+{% if target.on_job_failure_webhook_notification_ids %}
+      job_failure_webhooks:
+{% for webhook_id in target.on_job_failure_webhook_notification_ids %}
+        - id: {{ webhook_id | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if target.on_job_failure_emails %}
+      job_failure_emails:
+{% for email in target.on_job_failure_emails %}
+        - {{ email | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if target.on_task_failure_webhook_notification_ids %}
       task_failure_webhooks:
 {% for webhook_id in target.on_task_failure_webhook_notification_ids %}
         - id: {{ webhook_id | yaml_string }}
 {% endfor %}
+{% endif %}
+{% if target.on_task_failure_emails %}
       task_failure_emails:
 {% for email in target.on_task_failure_emails %}
         - {{ email | yaml_string }}
 {% endfor %}
+{% endif %}
     run_as:
       service_principal_name: "${var.run-as}"
 {% if not target.permissions.is_empty() %}

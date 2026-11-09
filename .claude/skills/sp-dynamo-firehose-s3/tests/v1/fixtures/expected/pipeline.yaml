@@ -7,10 +7,6 @@ metadata:
   uvBuildVersion: ">=0.13.7,<0.14.0"
 
 bundle:
-  onJobFailureWebhookNotificationIds:
-    - "XXXXXXXXX"
-  onJobFailureEmails:
-    - "jduran9987@gmail.com"
   tags:
     project: "orders"
     SOURCE: "dynamo"
@@ -19,10 +15,6 @@ bundle:
         host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_dev"
         computePolicy: "XXXXXXXXX"
-        onTaskFailureWebhookNotificationIds:
-          - "XXXXXXXXX"
-        onTaskFailureEmails:
-          - "jduran9987@gmail.com"
         permissions:
           canManage:
             servicePrincipal:
@@ -37,10 +29,6 @@ bundle:
         host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_qa"
         computePolicy: "XXXXXXXXX"
-        onTaskFailureWebhookNotificationIds:
-          - "XXXXXXXXX"
-        onTaskFailureEmails:
-          - "jduran9987@gmail.com"
         permissions:
           canManage:
             servicePrincipal:
@@ -55,10 +43,6 @@ bundle:
         host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_uat"
         computePolicy: "XXXXXXXXX"
-        onTaskFailureWebhookNotificationIds:
-          - "XXXXXXXXX"
-        onTaskFailureEmails:
-          - "jduran9987@gmail.com"
         permissions:
           canManage:
             servicePrincipal:
@@ -73,6 +57,11 @@ bundle:
         host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_prod"
         computePolicy: "XXXXXXXXX"
+        # Only prod accepts failure notifications. Remove any you don't want sent.
+        onJobFailureWebhookNotificationIds:
+          - "XXXXXXXXX"
+        onJobFailureEmails:
+          - "jduran9987@gmail.com"
         onTaskFailureWebhookNotificationIds:
           - "XXXXXXXXX"
         onTaskFailureEmails:

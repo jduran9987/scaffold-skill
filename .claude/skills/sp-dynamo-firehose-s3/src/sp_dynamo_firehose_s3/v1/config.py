@@ -17,6 +17,7 @@ from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS, TargetDefaults
 from sp_dynamo_firehose_s3.v1.fields import (
     KEY_DYNAMO_TYPES,
     MAX_JOB_TAGS,
+    NOTIFICATION_TARGET,
     QUARTZ_FIELD_PATTERN,
     SILVER_METADATA_COLUMNS,
     TARGET_NAMES,
@@ -186,6 +187,16 @@ def parse_target_entries(entries: object) -> dict[str, object]:
     return targets
 
 
+# Target settings only the notification target accepts. They have no defaults:
+# a notification left out of the YAML is not sent.
+NOTIFICATION_KEYS = (
+    "onJobFailureWebhookNotificationIds",
+    "onJobFailureEmails",
+    "onTaskFailureWebhookNotificationIds",
+    "onTaskFailureEmails",
+)
+
+
 def fill_target_defaults(name: str, settings: object) -> object:
     """Adds the target's defaults from `defaults.toml` to its settings.
 
@@ -196,7 +207,11 @@ def fill_target_defaults(name: str, settings: object) -> object:
     Returns:
         The settings with every missing key set to the target's default, or the
         value unchanged if it is not a mapping. Default permissions name the
-        target's service principal, including one set in the YAML.
+        target's service principal, including one set in the YAML. Notifications
+        are never filled in.
+
+    Raises:
+        ValueError: If a target other than prod sets notifications.
     """
     if settings is None:
         settings = {}
@@ -207,11 +222,13 @@ def fill_target_defaults(name: str, settings: object) -> object:
     filled.setdefault("host", defaults.host)
     filled.setdefault("computePolicy", defaults.compute_policy)
     filled.setdefault("servicePrincipal", defaults.service_principal)
-    filled.setdefault(
-        "onTaskFailureWebhookNotificationIds",
-        list(defaults.on_task_failure_webhook_notification_ids),
-    )
-    filled.setdefault("onTaskFailureEmails", list(defaults.on_task_failure_emails))
+    if name != NOTIFICATION_TARGET:
+        rejected = [key for key in NOTIFICATION_KEYS if key in filled]
+        if rejected:
+            raise ValueError(
+                f"bundle.targets.{name} cannot set {', '.join(rejected)}: "
+                f"notifications are only sent by the {NOTIFICATION_TARGET} target"
+            )
     filled.setdefault(
         "permissions", default_permissions(filled["servicePrincipal"], defaults)
     )
@@ -225,20 +242,26 @@ class Target(StrictModel):
         host: URL of the target's workspace.
         compute_policy: ID of the cluster policy the tasks' compute uses.
         service_principal: Display name of the service principal the job runs as.
+        on_job_failure_webhook_notification_ids: IDs of the notification
+            destinations the job notifies when a run fails.
+        on_job_failure_emails: Addresses the job emails when a run fails.
         on_task_failure_webhook_notification_ids: IDs of the notification
             destinations each task notifies when it fails.
         on_task_failure_emails: Addresses each task emails when it fails.
         permissions: Permissions on the bundle's resources.
 
-    Every setting the YAML leaves out comes from `defaults.toml`, applied by
-    `Bundle` before validation.
+    Notifications can only be set for prod and are not sent when left out.
+    Every other setting the YAML leaves out comes from `defaults.toml`, applied
+    by `Bundle` before validation.
     """
 
     host: WorkspaceHost
     compute_policy: NonEmptyString
     service_principal: NonEmptyString
-    on_task_failure_webhook_notification_ids: WebhookIds
-    on_task_failure_emails: EmailAddresses
+    on_job_failure_webhook_notification_ids: WebhookIds | None = None
+    on_job_failure_emails: EmailAddresses | None = None
+    on_task_failure_webhook_notification_ids: WebhookIds | None = None
+    on_task_failure_emails: EmailAddresses | None = None
     permissions: Permissions
 
     @model_validator(mode="after")
@@ -268,22 +291,11 @@ class Bundle(StrictModel):
     """Settings for the Declarative Automation Bundle.
 
     Attributes:
-        on_job_failure_webhook_notification_ids: IDs of the notification
-            destinations the job notifies when a run fails.
-        on_job_failure_emails: Addresses the job emails when a run fails.
         tags: Tags added to the job, at most 25.
         targets: Settings for each deployment target. Every supported target is
             always present; targets left out of the YAML use the defaults.
     """
 
-    on_job_failure_webhook_notification_ids: WebhookIds = Field(
-        default_factory=lambda: list(
-            DEFAULTS.bundle.on_job_failure_webhook_notification_ids
-        )
-    )
-    on_job_failure_emails: EmailAddresses = Field(
-        default_factory=lambda: list(DEFAULTS.bundle.on_job_failure_emails)
-    )
     tags: dict[TagKey, TagValue] = Field(
         default_factory=lambda: dict(DEFAULTS.bundle.tags), max_length=MAX_JOB_TAGS
     )

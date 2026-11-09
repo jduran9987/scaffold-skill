@@ -315,10 +315,18 @@ there.
 
 The whole section is optional.
 
+- Failure notifications are set only in the `prod` target entry and sent only
+  by `prod`. See the target fields below.
+- Notifications have no defaults. A notification field left out of the YAML is
+  not configured: the job and its tasks get no `email_notifications`,
+  `webhook_notifications`, or `notification_settings` for it.
+- `generate-yaml` pre-fills the `prod` entry with the notification values in
+  `defaults.toml`. Delete any you don't want sent.
+- `dev`, `qa`, and `uat` send no notifications. Setting a notification field on
+  them, or directly under `bundle`, is a validation error.
+
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `onJobFailureWebhookNotificationIds` | list of strings, at least 1 | No | defaults.toml | Notification destination IDs the job notifies on failure. |
-| `onJobFailureEmails` | list of emails, at least 1 | No | defaults.toml | Addresses the job emails on failure. |
 | `tags` | map of string to string, at most 25 | No | defaults.toml | Job tags. Keys start with a letter and are not YAML words like `true` or `no`. |
 | `targets` | list of single-key maps | No | defaults.toml | Per-target settings. See below. |
 
@@ -334,6 +342,10 @@ bundle:
   targets:
     - prod:
         host: "https://prod-workspace.cloud.databricks.com"
+        onJobFailureEmails:
+          - "oncall@example.com"
+        onTaskFailureEmails:
+          - "oncall@example.com"
 ```
 
 | Field | Type | Req | Default | Description |
@@ -341,8 +353,10 @@ bundle:
 | `host` | string: `https://…` | No | defaults.toml | Workspace URL. |
 | `servicePrincipal` | string | No | defaults.toml | Display name of the service principal the job runs as. |
 | `computePolicy` | string | No | defaults.toml | Cluster policy ID the job's compute uses. |
-| `onTaskFailureWebhookNotificationIds` | list of strings, at least 1 | No | defaults.toml | Notification destination IDs each task notifies on failure. |
-| `onTaskFailureEmails` | list of emails, at least 1 | No | defaults.toml | Addresses each task emails on failure. |
+| `onJobFailureWebhookNotificationIds` | list of strings, at least 1 | No | — | Notification destination IDs the job notifies on failure. Not sent when left out. `prod` only; rejected on other targets. |
+| `onJobFailureEmails` | list of emails, at least 1 | No | — | Addresses the job emails on failure. Not sent when left out. `prod` only; rejected on other targets. |
+| `onTaskFailureWebhookNotificationIds` | list of strings, at least 1 | No | — | Notification destination IDs each task notifies on failure. Not sent when left out. `prod` only; rejected on other targets. |
+| `onTaskFailureEmails` | list of emails, at least 1 | No | — | Addresses each task emails on failure. Not sent when left out. `prod` only; rejected on other targets. |
 | `permissions` | map | No | defaults.toml | Job permissions. When set, it replaces the default permissions. |
 
 `bundle.targets.<target>.permissions`:

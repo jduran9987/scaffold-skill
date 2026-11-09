@@ -8,14 +8,6 @@ metadata:
   uvBuildVersion: {{ uv_build_version | yaml_string }}
 
 bundle:
-  onJobFailureWebhookNotificationIds:
-{% for webhook_id in bundle.on_job_failure_webhook_notification_ids %}
-    - {{ webhook_id | yaml_string }}
-{% endfor %}
-  onJobFailureEmails:
-{% for email in bundle.on_job_failure_emails %}
-    - {{ email | yaml_string }}
-{% endfor %}
   tags:
 {% for key, value in bundle.tags.items() %}
     {{ key }}: {{ value | yaml_string }}
@@ -26,14 +18,20 @@ bundle:
         host: {{ target.host | yaml_string }}
         servicePrincipal: {{ target.service_principal | yaml_string }}
         computePolicy: {{ target.compute_policy | yaml_string }}
-        onTaskFailureWebhookNotificationIds:
-{% for webhook_id in target.on_task_failure_webhook_notification_ids %}
-          - {{ webhook_id | yaml_string }}
+{% if name == notification_target %}
+        # Only prod accepts failure notifications. Remove any you don't want sent.
+{% for key, values in [
+  ("onJobFailureWebhookNotificationIds", notification_defaults.on_job_failure_webhook_notification_ids),
+  ("onJobFailureEmails", notification_defaults.on_job_failure_emails),
+  ("onTaskFailureWebhookNotificationIds", notification_defaults.on_task_failure_webhook_notification_ids),
+  ("onTaskFailureEmails", notification_defaults.on_task_failure_emails),
+] if values %}
+        {{ key }}:
+{% for value in values %}
+          - {{ value | yaml_string }}
 {% endfor %}
-        onTaskFailureEmails:
-{% for email in target.on_task_failure_emails %}
-          - {{ email | yaml_string }}
 {% endfor %}
+{% endif %}
         permissions:
 {% for level, grantees in [("canManage", target.permissions.can_manage), ("canRun", target.permissions.can_run)] %}
           {{ level }}:

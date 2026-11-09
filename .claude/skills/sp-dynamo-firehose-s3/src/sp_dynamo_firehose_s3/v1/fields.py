@@ -70,6 +70,8 @@ NonEmptyString = Annotated[str, StringConstraints(min_length=1)]
 # The only deployment targets. Each becomes a bundle target and an `{env}` value.
 TARGET_NAMES = ("dev", "qa", "uat", "prod")
 TargetName = Literal["dev", "qa", "uat", "prod"]
+# The only target that sends job and task failure notifications.
+NOTIFICATION_TARGET = "prod"
 # Quoted in YAML, so 3.10 is not read as the number 3.1.
 PythonVersion = Annotated[str, StringConstraints(pattern=r"^3\.\d+$")]
 # A version range with a lower and an upper bound, such as ">=0.13.7,<0.14.0".

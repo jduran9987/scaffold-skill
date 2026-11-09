@@ -40,6 +40,19 @@ def test_service_principal_placeholder_is_replaced(tmp_path, monkeypatch):
     assert defaults.bundle.for_target("uat").service_principal == "sp_ingestion_uat"
 
 
+def test_notification_defaults_are_optional(tmp_path, monkeypatch):
+    lines = [
+        line
+        for line in TEST_COPY.splitlines()
+        if not line.startswith(("on_job_failure", "on_task_failure"))
+    ]
+
+    defaults = load_from(tmp_path, monkeypatch, "\n".join(lines) + "\n")
+
+    assert defaults.bundle.on_job_failure_emails is None
+    assert defaults.bundle.on_task_failure_webhook_notification_ids is None
+
+
 def test_target_overrides_apply_to_one_target(tmp_path, monkeypatch):
     text = TEST_COPY + '\n[bundle.targets.prod]\nhost = "https://prod.example.com"\n'
 
@@ -64,6 +77,11 @@ def test_target_overrides_apply_to_one_target(tmp_path, monkeypatch):
             "emails",
         ),
         ("[cli]", "[cli]\nunknown = 1", "unknown"),
+        (
+            "manage_groups = ",
+            'on_task_failure_emails = ["a@example.com"]\nmanage_groups = ',
+            "on_task_failure_emails",
+        ),
         ('project = "orders"', 'true = "orders"', "reserved YAML words"),
         ("[job]", "[job]\n[bundle.targets.staging]", "staging"),
         ("[cli]", "[cli", "Invalid defaults file"),

@@ -258,6 +258,8 @@ def test_targets_come_from_bundle(raw_config, tmp_path):
         "environment",
         "compute_policy_id",
         "run-as",
+        "job_failure_webhooks",
+        "job_failure_emails",
         "task_failure_webhooks",
         "task_failure_emails",
     ]
@@ -267,6 +269,8 @@ def test_targets_come_from_bundle(raw_config, tmp_path):
         "environment": "prod",
         "compute_policy_id": "XXXXXXXXX",
         "run-as": {"lookup": {"service_principal": "sp_ingestion_prod"}},
+        "job_failure_webhooks": [{"id": "XXXXXXXXX"}],
+        "job_failure_emails": ["jduran9987@gmail.com"],
         "task_failure_webhooks": [{"id": "XXXXXXXXX"}],
         "task_failure_emails": ["jduran9987@gmail.com"],
     }
@@ -768,42 +772,110 @@ JOB_KEYS = ("onJobFailureWebhookNotificationIds", "onJobFailureEmails")
 TASK_KEYS = ("onTaskFailureWebhookNotificationIds", "onTaskFailureEmails")
 
 
-def test_job_notifications_come_from_bundle(raw_config, tmp_path):
-    raw_config["bundle"][JOB_KEYS[0]] = ["j1", "j2"]
-    raw_config["bundle"][JOB_KEYS[1]] = ["a@example.com"]
+def prod_target(raw_config):
+    return raw_config["bundle"]["targets"][3]["prod"]
 
-    job = load_job(raw_config, tmp_path)
 
-    assert job["webhook_notifications"] == {"on_failure": [{"id": "j1"}, {"id": "j2"}]}
-    assert job["email_notifications"] == {"on_failure": ["a@example.com"]}
+def load_targets(raw_config, tmp_path):
+    sources = generated_sources(raw_config, tmp_path)
+    return yaml.safe_load(sources["databricks.yml"])["targets"]
+
+
+def test_job_notifications_are_set_on_prod(raw_config, tmp_path):
+    prod_target(raw_config)[JOB_KEYS[0]] = ["j1", "j2"]
+    prod_target(raw_config)[JOB_KEYS[1]] = ["a@example.com"]
+
+    sources = generated_sources(raw_config, tmp_path)
+    prod = yaml.safe_load(sources["databricks.yml"])["targets"]["prod"]["variables"]
+    job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
+
+    assert prod["job_failure_webhooks"] == [{"id": "j1"}, {"id": "j2"}]
+    assert prod["job_failure_emails"] == ["a@example.com"]
+    assert job["webhook_notifications"] == {"on_failure": "${var.job_failure_webhooks}"}
+    assert job["email_notifications"] == {"on_failure": "${var.job_failure_emails}"}
     assert job["notification_settings"] == {"no_alert_for_skipped_runs": False}
 
 
-def test_job_notifications_have_defaults(raw_config, tmp_path):
-    for key in JOB_KEYS:
-        del raw_config["bundle"][key]
-
-    job = load_job(raw_config, tmp_path)
-
-    assert job["webhook_notifications"] == {"on_failure": [{"id": "XXXXXXXXX"}]}
-    assert job["email_notifications"] == {"on_failure": ["jduran9987@gmail.com"]}
+def drop_notifications(raw_config):
+    for key in JOB_KEYS + TASK_KEYS:
+        del prod_target(raw_config)[key]
 
 
-def test_task_notifications_are_set_per_target(raw_config, tmp_path):
-    dev_target(raw_config)[TASK_KEYS[0]] = ["w1", "w2"]
-    dev_target(raw_config)[TASK_KEYS[1]] = ["dev@example.com"]
+def test_notifications_left_out_are_not_configured(raw_config, tmp_path):
+    drop_notifications(raw_config)
+
+    sources = generated_sources(raw_config, tmp_path)
+    bundle = yaml.safe_load(sources["databricks.yml"])
+    job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
+
+    assert list(bundle["variables"]) == ["environment", "compute_policy_id", "run-as"]
+    for target in bundle["targets"].values():
+        assert list(target["variables"]) == [
+            "environment",
+            "compute_policy_id",
+            "run-as",
+        ]
+    for key in (
+        "email_notifications",
+        "webhook_notifications",
+        "notification_settings",
+    ):
+        assert key not in job
+        for task in job["tasks"]:
+            assert key not in task
+
+
+def test_null_notifications_are_not_configured(raw_config, tmp_path):
+    expected = generated_sources(raw_config, tmp_path / "full")
+    for key in JOB_KEYS + TASK_KEYS:
+        prod_target(raw_config)[key] = None
+    nulls = generated_sources(raw_config, tmp_path / "nulls")
+    drop_notifications(raw_config)
+
+    assert nulls == generated_sources(raw_config, tmp_path / "left-out")
+    assert nulls != expected
+
+
+def test_only_the_notifications_set_are_configured(raw_config, tmp_path):
+    drop_notifications(raw_config)
+    prod_target(raw_config)["onJobFailureEmails"] = ["a@example.com"]
+    prod_target(raw_config)["onTaskFailureWebhookNotificationIds"] = ["w1"]
+
+    sources = generated_sources(raw_config, tmp_path)
+    bundle = yaml.safe_load(sources["databricks.yml"])
+    job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
+
+    assert list(bundle["variables"])[3:] == [
+        "job_failure_emails",
+        "task_failure_webhooks",
+    ]
+    assert bundle["targets"]["prod"]["variables"]["job_failure_emails"] == [
+        "a@example.com"
+    ]
+    assert job["email_notifications"] == {"on_failure": "${var.job_failure_emails}"}
+    assert "webhook_notifications" not in job
+    assert job["notification_settings"] == {"no_alert_for_skipped_runs": False}
+    for task in job["tasks"]:
+        assert task["webhook_notifications"] == {
+            "on_failure": "${var.task_failure_webhooks}"
+        }
+        assert "email_notifications" not in task
+        assert task["notification_settings"]["alert_on_last_attempt"] is True
+
+
+def test_task_notifications_are_set_on_prod(raw_config, tmp_path):
+    prod_target(raw_config)[TASK_KEYS[0]] = ["w1", "w2"]
+    prod_target(raw_config)[TASK_KEYS[1]] = ["prod@example.com"]
 
     sources = generated_sources(raw_config, tmp_path)
     targets = yaml.safe_load(sources["databricks.yml"])["targets"]
     job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
 
-    assert targets["dev"]["variables"]["task_failure_webhooks"] == [
+    assert targets["prod"]["variables"]["task_failure_webhooks"] == [
         {"id": "w1"},
         {"id": "w2"},
     ]
-    assert targets["dev"]["variables"]["task_failure_emails"] == ["dev@example.com"]
-    assert targets["qa"]["variables"]["task_failure_webhooks"] == [{"id": "XXXXXXXXX"}]
-    assert targets["qa"]["variables"]["task_failure_emails"] == ["jduran9987@gmail.com"]
+    assert targets["prod"]["variables"]["task_failure_emails"] == ["prod@example.com"]
     for task in job["tasks"]:
         assert task["webhook_notifications"] == {
             "on_failure": "${var.task_failure_webhooks}"
@@ -812,6 +884,51 @@ def test_task_notifications_are_set_per_target(raw_config, tmp_path):
             "on_failure": "${var.task_failure_emails}"
         }
         assert task["notification_settings"]["alert_on_last_attempt"] is True
+
+
+def test_only_prod_sends_notifications(raw_config, tmp_path):
+    bundle = yaml.safe_load(generated_sources(raw_config, tmp_path)["databricks.yml"])
+
+    for name in ("job_failure_webhooks", "job_failure_emails"):
+        assert bundle["variables"][name]["default"] == []
+    for name in ("task_failure_webhooks", "task_failure_emails"):
+        assert bundle["variables"][name]["default"] == []
+    for target in ("dev", "qa", "uat"):
+        variables = bundle["targets"][target]["variables"]
+        assert not any(key.endswith("_failure_webhooks") for key in variables)
+        assert not any(key.endswith("_failure_emails") for key in variables)
+
+
+@pytest.mark.parametrize("key", JOB_KEYS)
+def test_notifications_outside_targets_are_rejected(raw_config, tmp_path, key):
+    raw_config["bundle"][key] = ["x@example.com"] if key.endswith("Emails") else ["w1"]
+
+    with pytest.raises(ValidationError, match=key):
+        generate(raw_config, tmp_path)
+    assert not tmp_path.joinpath("pyproject.toml").exists()
+
+
+@pytest.mark.parametrize("target", [0, 1, 2])
+@pytest.mark.parametrize("key", JOB_KEYS + TASK_KEYS)
+def test_notifications_on_non_prod_targets_are_rejected(
+    raw_config, tmp_path, target, key
+):
+    [(name, settings)] = raw_config["bundle"]["targets"][target].items()
+    settings[key] = ["x@example.com"] if key.endswith("Emails") else ["w1"]
+
+    with pytest.raises(
+        ValidationError, match=rf"bundle\.targets\.{name} cannot set {key}"
+    ):
+        generate(raw_config, tmp_path)
+    assert not tmp_path.joinpath("pyproject.toml").exists()
+
+
+def test_null_notifications_on_non_prod_targets_are_left_out(raw_config, tmp_path):
+    expected = generated_sources(raw_config, tmp_path / "full")
+    for key in JOB_KEYS + TASK_KEYS:
+        dev_target(raw_config)[key] = None
+
+    assert generated_sources(raw_config, tmp_path / "nulls") == expected
 
 
 @pytest.mark.parametrize("level", ["job", "task"])
@@ -829,7 +946,7 @@ def test_task_notifications_are_set_per_target(raw_config, tmp_path):
 def test_invalid_notification_values_are_rejected(
     raw_config, tmp_path, level, index, value
 ):
-    section = raw_config["bundle"] if level == "job" else dev_target(raw_config)
+    section = prod_target(raw_config)
     keys = JOB_KEYS if level == "job" else TASK_KEYS
     section[keys[index]] = value
 
@@ -842,7 +959,6 @@ def test_null_optional_keys_take_their_defaults(raw_config, tmp_path):
     raw_config["metadata"]["pythonVersion"] = None
     raw_config["metadata"]["uvBuildVersion"] = None
     raw_config["bundle"]["tags"] = None
-    raw_config["bundle"]["onJobFailureEmails"] = None
     dev_target(raw_config)["permissions"] = None
     dev_target(raw_config)["host"] = None
     raw_config["bundle"]["targets"][1] = {"qa": None}
@@ -867,6 +983,7 @@ def test_null_required_keys_are_missing(raw_config, tmp_path, change):
 
 
 def test_bundle_is_optional_and_defaults_to_the_sample(raw_config, tmp_path):
+    drop_notifications(raw_config)
     expected = generated_sources(raw_config, tmp_path / "full")
     del raw_config["bundle"]
 
@@ -874,6 +991,7 @@ def test_bundle_is_optional_and_defaults_to_the_sample(raw_config, tmp_path):
 
 
 def test_targets_left_out_use_their_defaults(raw_config, tmp_path):
+    drop_notifications(raw_config)
     expected = generated_sources(raw_config, tmp_path / "full")
     raw_config["bundle"]["targets"] = [raw_config["bundle"]["targets"][2]]
 
@@ -930,7 +1048,7 @@ def test_unknown_keys_are_rejected_in_every_section(raw_config, tmp_path, sectio
         lambda c: c["job"].update(executionMode=True),
         lambda c: c["job"]["bronze"].update(triggerInterval=60),
         lambda c: c["bundle"].update(tags={"a": 1}),
-        lambda c: c["bundle"].update(onJobFailureEmails="a@example.com"),
+        lambda c: prod_target(c).update(onJobFailureEmails="a@example.com"),
         lambda c: dev_target(c).update(computePolicy=123),
         lambda c: dev_target(c)["permissions"]["canRun"].update(groups="g"),
         lambda c: c["schema"].update(primaryKeys="id"),

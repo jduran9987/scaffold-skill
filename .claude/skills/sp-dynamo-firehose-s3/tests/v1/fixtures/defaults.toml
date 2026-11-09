@@ -22,8 +22,13 @@ python_version = "3.12"
 uv_build_version = ">=0.13.7,<0.14.0"
 
 [bundle]
+# Failure notifications `generate-yaml` writes into the prod target, the only
+# target that sends them. They are not applied to YAMLs that leave them out,
+# and any of them can be removed.
 on_job_failure_webhook_notification_ids = ["XXXXXXXXX"]
 on_job_failure_emails = ["jduran9987@gmail.com"]
+on_task_failure_webhook_notification_ids = ["XXXXXXXXX"]
+on_task_failure_emails = ["jduran9987@gmail.com"]
 
 [bundle.tags]
 project = "orders"
@@ -35,8 +40,6 @@ SOURCE = "dynamo"
 host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
 compute_policy = "XXXXXXXXX"
 service_principal = "sp_ingestion_{target}"
-on_task_failure_webhook_notification_ids = ["XXXXXXXXX"]
-on_task_failure_emails = ["jduran9987@gmail.com"]
 # The target's service principal also gets CAN_MANAGE.
 manage_groups = ["data_engineers", "admins"]
 run_groups = ["data_analysts"]

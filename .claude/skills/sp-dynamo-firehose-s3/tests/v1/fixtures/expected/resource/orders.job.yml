@@ -18,11 +18,9 @@ resources:
         project: "orders"
         SOURCE: "dynamo"
       email_notifications:
-        on_failure:
-          - "jduran9987@gmail.com"
+        on_failure: ${var.job_failure_emails}
       webhook_notifications:
-        on_failure:
-          - id: "XXXXXXXXX"
+        on_failure: ${var.job_failure_webhooks}
       notification_settings:
         no_alert_for_skipped_runs: false
       timeout_seconds: 0

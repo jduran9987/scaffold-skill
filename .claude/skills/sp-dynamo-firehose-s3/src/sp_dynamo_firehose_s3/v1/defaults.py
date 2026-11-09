@@ -93,9 +93,6 @@ class TargetDefaults(DefaultsModel):
         compute_policy: ID of the cluster policy the tasks' compute uses.
         service_principal: Run-as service principal. `{target}` is replaced by the
             target's name.
-        on_task_failure_webhook_notification_ids: Destinations each task notifies
-            when it fails.
-        on_task_failure_emails: Addresses each task emails when it fails.
         manage_groups: Groups with CAN_MANAGE, along with the service principal.
         run_groups: Groups with CAN_RUN.
     """
@@ -103,8 +100,6 @@ class TargetDefaults(DefaultsModel):
     host: WorkspaceHost
     compute_policy: NonEmptyString
     service_principal: NonEmptyString
-    on_task_failure_webhook_notification_ids: WebhookIds
-    on_task_failure_emails: EmailAddresses
     manage_groups: list[NonEmptyString]
     run_groups: list[NonEmptyString]
 
@@ -116,9 +111,6 @@ class TargetOverrides(DefaultsModel):
         host: URL of the target's workspace.
         compute_policy: ID of the cluster policy the tasks' compute uses.
         service_principal: Run-as service principal.
-        on_task_failure_webhook_notification_ids: Destinations each task notifies
-            when it fails.
-        on_task_failure_emails: Addresses each task emails when it fails.
         manage_groups: Groups with CAN_MANAGE, along with the service principal.
         run_groups: Groups with CAN_RUN.
     """
@@ -126,8 +118,6 @@ class TargetOverrides(DefaultsModel):
     host: WorkspaceHost | None = None
     compute_policy: NonEmptyString | None = None
     service_principal: NonEmptyString | None = None
-    on_task_failure_webhook_notification_ids: WebhookIds | None = None
-    on_task_failure_emails: EmailAddresses | None = None
     manage_groups: list[NonEmptyString] | None = None
     run_groups: list[NonEmptyString] | None = None
 
@@ -135,17 +125,25 @@ class TargetOverrides(DefaultsModel):
 class BundleDefaults(DefaultsModel):
     """Defaults for the `bundle` section.
 
+    The notification values only pre-fill the prod target in YAMLs that
+    `generate-yaml` writes. Unset ones are left out of those YAMLs.
+
     Attributes:
         on_job_failure_webhook_notification_ids: Destinations the job notifies when
             a run fails.
         on_job_failure_emails: Addresses the job emails when a run fails.
+        on_task_failure_webhook_notification_ids: Destinations each task notifies
+            when it fails.
+        on_task_failure_emails: Addresses each task emails when it fails.
         tags: Tags added to the job.
         target: Defaults shared by every target.
         targets: Overrides for individual targets.
     """
 
-    on_job_failure_webhook_notification_ids: WebhookIds
-    on_job_failure_emails: EmailAddresses
+    on_job_failure_webhook_notification_ids: WebhookIds | None = None
+    on_job_failure_emails: EmailAddresses | None = None
+    on_task_failure_webhook_notification_ids: WebhookIds | None = None
+    on_task_failure_emails: EmailAddresses | None = None
     tags: Annotated[dict[TagKey, TagValue], Field(max_length=MAX_JOB_TAGS)]
     target: TargetDefaults
     targets: dict[TargetName, TargetOverrides] = {}

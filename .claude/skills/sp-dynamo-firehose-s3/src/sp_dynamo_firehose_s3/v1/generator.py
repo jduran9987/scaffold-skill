@@ -16,6 +16,7 @@ from sp_dynamo_firehose_s3.v1.fields import (
     BRONZE_DATA_COLUMN,
     BRONZE_METADATA_COLUMNS,
     ENV_PLACEHOLDER,
+    NOTIFICATION_TARGET,
     PIPELINE_NAME_PATTERN,
     SILVER_METADATA,
     TARGET_NAMES,
@@ -180,13 +181,16 @@ def render_bundle_files(
     task_keys = list_task_keys(config)
     return {
         "databricks.yml": environment.get_template("databricks.yml.j2").render(
-            metadata=config.metadata, bundle=config.bundle
+            metadata=config.metadata,
+            bundle=config.bundle,
+            notification_target=NOTIFICATION_TARGET,
         ),
         f"resource/{config.metadata.name}.job.yml": environment.get_template(
             "job.yml.j2"
         ).render(
             metadata=config.metadata,
             bundle=config.bundle,
+            notification_target=NOTIFICATION_TARGET,
             job=config.job,
             job_key=resource_name,
             cluster_key=f"{resource_name}_cluster",
@@ -513,6 +517,8 @@ def render_config_template(schema: InferredSchema, table: str) -> str:
         .render(
             name=default_pipeline_name(table),
             bundle=Bundle(),
+            notification_target=NOTIFICATION_TARGET,
+            notification_defaults=DEFAULTS.bundle,
             python_version=DEFAULTS.metadata.python_version,
             uv_build_version=DEFAULTS.metadata.uv_build_version,
             execution_mode=DEFAULTS.job.execution_mode,

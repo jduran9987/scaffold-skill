@@ -1,3 +1,6 @@
+{% set prod = bundle.targets[notification_target] %}
+{% set job_alerts = prod.on_job_failure_emails or prod.on_job_failure_webhook_notification_ids %}
+{% set task_alerts = prod.on_task_failure_emails or prod.on_task_failure_webhook_notification_ids %}
 resources:
   jobs:
     {{ job_key }}:
@@ -23,18 +26,18 @@ resources:
         {{ key }}: {{ value | yaml_string }}
 {% endfor %}
 {% endif %}
+{% if prod.on_job_failure_emails %}
       email_notifications:
-        on_failure:
-{% for email in bundle.on_job_failure_emails %}
-          - {{ email | yaml_string }}
-{% endfor %}
+        on_failure: ${var.job_failure_emails}
+{% endif %}
+{% if prod.on_job_failure_webhook_notification_ids %}
       webhook_notifications:
-        on_failure:
-{% for webhook_id in bundle.on_job_failure_webhook_notification_ids %}
-          - id: {{ webhook_id | yaml_string }}
-{% endfor %}
+        on_failure: ${var.job_failure_webhooks}
+{% endif %}
+{% if job_alerts %}
       notification_settings:
         no_alert_for_skipped_runs: false
+{% endif %}
       timeout_seconds: 0
 
       job_clusters:
@@ -61,13 +64,19 @@ resources:
               - "${var.environment}"
           libraries:
             - whl: ../dist/*.whl
+{% if prod.on_task_failure_emails %}
           email_notifications:
             on_failure: ${var.task_failure_emails}
+{% endif %}
+{% if prod.on_task_failure_webhook_notification_ids %}
           webhook_notifications:
             on_failure: ${var.task_failure_webhooks}
+{% endif %}
+{% if task_alerts %}
           notification_settings:
             alert_on_last_attempt: true
             no_alert_for_canceled_runs: true
             no_alert_for_skipped_runs: false
+{% endif %}
           timeout_seconds: 0
 {% endfor %}
