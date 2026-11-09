@@ -40,6 +40,27 @@ def test_service_principal_placeholder_is_replaced(tmp_path, monkeypatch):
     assert defaults.bundle.for_target("uat").service_principal == "sp_ingestion_uat"
 
 
+def test_target_placeholder_in_group_names_is_replaced(tmp_path, monkeypatch):
+    text = TEST_COPY.replace(
+        'manage_groups = ["data_engineers", "admins"]',
+        'manage_groups = ["data_engineers_{target}", "admins"]',
+    ).replace('run_groups = ["data_analysts"]', 'run_groups = ["{target}_readers"]')
+
+    defaults = load_from(tmp_path, monkeypatch, text)
+
+    qa = defaults.bundle.for_target("qa")
+    assert qa.manage_groups == ["data_engineers_qa", "admins"]
+    assert qa.run_groups == ["qa_readers"]
+
+
+def test_target_placeholder_in_tags_is_kept(tmp_path, monkeypatch):
+    text = TEST_COPY.replace('SOURCE = "dynamo"', 'environment = "{target}"')
+
+    defaults = load_from(tmp_path, monkeypatch, text)
+
+    assert defaults.bundle.tags["environment"] == "{target}"
+
+
 def test_notification_defaults_are_optional(tmp_path, monkeypatch):
     lines = [
         line
@@ -54,12 +75,66 @@ def test_notification_defaults_are_optional(tmp_path, monkeypatch):
 
 
 def test_target_overrides_apply_to_one_target(tmp_path, monkeypatch):
-    text = TEST_COPY + '\n[bundle.targets.prod]\nhost = "https://prod.example.com"\n'
+    text = TEST_COPY.replace(
+        "[bundle.targets.prod]\n",
+        '[bundle.targets.prod]\nservice_principal = "sp_prod_owner"\n',
+    )
 
     defaults = load_from(tmp_path, monkeypatch, text)
 
-    assert defaults.bundle.for_target("prod").host == "https://prod.example.com"
-    assert defaults.bundle.for_target("dev").host != "https://prod.example.com"
+    assert defaults.bundle.for_target("prod").service_principal == "sp_prod_owner"
+    assert defaults.bundle.for_target("dev").service_principal == "sp_ingestion_dev"
+
+
+PROD_PERMISSIONS = (
+    'compute_policy = "PRODPOLICY"\n'
+    'service_principal_permissions = "can_manage"\n'
+    'manage_groups = ["data_engineers", "admins"]\n'
+    'run_groups = ["data_analysts"]\n'
+    "view_groups = []\n"
+)
+
+
+def test_every_target_needs_its_own_table(tmp_path, monkeypatch):
+    start = TEST_COPY.index("[bundle.targets.qa]\n")
+    end = TEST_COPY.index("[bundle.targets.uat]\n")
+
+    with pytest.raises(DefaultsError, match=r"missing \[bundle\.targets\.qa\]"):
+        load_from(tmp_path, monkeypatch, TEST_COPY[:start] + TEST_COPY[end:])
+
+
+def test_each_target_has_its_own_permissions(tmp_path, monkeypatch):
+    assert PROD_PERMISSIONS in TEST_COPY
+    text = TEST_COPY.replace(
+        PROD_PERMISSIONS,
+        'compute_policy = "PRODPOLICY"\n'
+        'service_principal_permissions = "can_run"\n'
+        'manage_groups = ["prod_admins"]\n'
+        "run_groups = []\n"
+        'view_groups = ["business_users"]\n',
+    )
+
+    defaults = load_from(tmp_path, monkeypatch, text)
+
+    prod = defaults.bundle.for_target("prod")
+    assert prod.service_principal_permissions == "can_run"
+    assert (prod.manage_groups, prod.run_groups, prod.view_groups) == (
+        ["prod_admins"],
+        [],
+        ["business_users"],
+    )
+    dev = defaults.bundle.for_target("dev")
+    assert dev.service_principal_permissions == "can_manage"
+    assert dev.manage_groups == ["data_engineers", "admins"]
+
+
+def test_each_target_has_its_own_workspace(tmp_path, monkeypatch):
+    defaults = load_from(tmp_path, monkeypatch, TEST_COPY)
+
+    for name in ("dev", "qa", "uat", "prod"):
+        target = defaults.bundle.for_target(name)
+        assert target.host == f"https://{name}-workspace.cloud.databricks.com"
+        assert target.compute_policy == f"{name.upper()}POLICY"
 
 
 @pytest.mark.parametrize(
@@ -84,6 +159,42 @@ def test_target_overrides_apply_to_one_target(tmp_path, monkeypatch):
         ),
         ('project = "orders"', 'true = "orders"', "reserved YAML words"),
         ("[job]", "[job]\n[bundle.targets.staging]", "staging"),
+        ("[bundle.targets.qa]\n", "[bundle.targets.qa_old]\n", "qa_old"),
+        (
+            'QAPOLICY"\nservice_principal_permissions = "can_manage"',
+            'QAPOLICY"',
+            "service_principal_permissions",
+        ),
+        (
+            'QAPOLICY"\nservice_principal_permissions = "can_manage"',
+            'QAPOLICY"\nservice_principal_permissions = "can_view"',
+            "service_principal_permissions",
+        ),
+        (
+            "view_groups = []\n\n[bundle.targets.qa]",
+            "\n[bundle.targets.qa]",
+            "view_groups",
+        ),
+        (
+            "view_groups = []\n\n[bundle.targets.qa]",
+            'view_groups = ["admins"]\n\n[bundle.targets.qa]',
+            "not: admins",
+        ),
+        (
+            "[bundle.target]\n",
+            '[bundle.target]\nmanage_groups = ["g"]\n',
+            "manage_groups",
+        ),
+        (
+            'compute_policy = "UATPOLICY"\n',
+            "",
+            "compute_policy",
+        ),
+        (
+            "[bundle.target]\n",
+            '[bundle.target]\nhost = "https://shared.cloud.databricks.com"\n',
+            "host",
+        ),
         ("[cli]", "[cli", "Invalid defaults file"),
         (
             '[job.bronze]\ncheckpoint_path = ""',
@@ -152,7 +263,10 @@ CUSTOM = (
         'service_principal = "sp_{target}_etl"',
     )
     .replace('trigger_interval = "1 minute"', 'trigger_interval = "5 minutes"')
-    + '\n[bundle.targets.prod]\nhost = "https://prod.example.com"\n'
+    .replace(
+        'host = "https://prod-workspace.cloud.databricks.com"',
+        'host = "https://prod.example.com"',
+    )
 )
 MINIMAL_YAML = """\
 version: v1

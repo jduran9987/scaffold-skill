@@ -18,15 +18,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sp_dynamo_firehose_s3.v1.fields import (
     MAX_JOB_TAGS,
     TARGET_NAMES,
+    TARGET_PLACEHOLDER,
     YAML_RESERVED_WORDS,
     AwsRegion,
     ColumnName,
     EmailAddresses,
+    GroupNames,
     IamRoleArn,
     NonEmptyString,
     PythonVersion,
     S3BucketArn,
     S3Path,
+    ServicePrincipalPermission,
     TableName,
     TagKey,
     TagValue,
@@ -34,11 +37,11 @@ from sp_dynamo_firehose_s3.v1.fields import (
     UvBuildVersion,
     WebhookIds,
     WorkspaceHost,
+    check_group_levels,
 )
 
 DEFAULTS_ENV_VAR = "SP_DYNAMO_FIREHOSE_S3_V1_DEFAULTS"
 DEFAULTS_FILE = "defaults.toml"
-TARGET_PLACEHOLDER = "{target}"
 
 
 class DefaultsError(ValueError):
@@ -86,40 +89,71 @@ class MetadataDefaults(DefaultsModel):
 
 
 class TargetDefaults(DefaultsModel):
-    """Defaults for one deployment target.
-
-    Attributes:
-        host: URL of the target's workspace.
-        compute_policy: ID of the cluster policy the tasks' compute uses.
-        service_principal: Run-as service principal. `{target}` is replaced by the
-            target's name.
-        manage_groups: Groups with CAN_MANAGE, along with the service principal.
-        run_groups: Groups with CAN_RUN.
-    """
-
-    host: WorkspaceHost
-    compute_policy: NonEmptyString
-    service_principal: NonEmptyString
-    manage_groups: list[NonEmptyString]
-    run_groups: list[NonEmptyString]
-
-
-class TargetOverrides(DefaultsModel):
-    """Overrides for one target. Unset keys come from the shared target defaults.
+    """Defaults for one deployment target, with the shared defaults applied.
 
     Attributes:
         host: URL of the target's workspace.
         compute_policy: ID of the cluster policy the tasks' compute uses.
         service_principal: Run-as service principal.
-        manage_groups: Groups with CAN_MANAGE, along with the service principal.
+        service_principal_permissions: Level the service principal gets:
+            `can_manage` or `can_run`.
+        manage_groups: Groups with CAN_MANAGE.
         run_groups: Groups with CAN_RUN.
+        view_groups: Groups with CAN_VIEW.
     """
 
-    host: WorkspaceHost | None = None
-    compute_policy: NonEmptyString | None = None
+    host: WorkspaceHost
+    compute_policy: NonEmptyString
+    service_principal: NonEmptyString
+    service_principal_permissions: ServicePrincipalPermission
+    manage_groups: GroupNames
+    run_groups: GroupNames
+    view_groups: GroupNames
+
+
+class SharedTargetDefaults(DefaultsModel):
+    """Defaults shared by every target.
+
+    Attributes:
+        service_principal: Run-as service principal. `{target}` is replaced by the
+            target's name.
+    """
+
+    service_principal: NonEmptyString
+
+
+class TargetOverrides(DefaultsModel):
+    """Settings for one target's workspace.
+
+    Attributes:
+        host: URL of the target's workspace.
+        compute_policy: ID of the cluster policy the tasks' compute uses in the
+            target's workspace.
+        service_principal_permissions: Level the service principal gets:
+            `can_manage` or `can_run`.
+        manage_groups: Groups with CAN_MANAGE.
+        run_groups: Groups with CAN_RUN.
+        view_groups: Groups with CAN_VIEW.
+        service_principal: Run-as service principal. Overrides the shared default.
+    """
+
+    host: WorkspaceHost
+    compute_policy: NonEmptyString
+    service_principal_permissions: ServicePrincipalPermission
+    manage_groups: GroupNames
+    run_groups: GroupNames
+    view_groups: GroupNames
     service_principal: NonEmptyString | None = None
-    manage_groups: list[NonEmptyString] | None = None
-    run_groups: list[NonEmptyString] | None = None
+
+    @model_validator(mode="after")
+    def check_groups(self) -> Self:
+        """Allows each group at only one permission level.
+
+        Returns:
+            The validated model.
+        """
+        check_group_levels(self.manage_groups, self.run_groups, self.view_groups)
+        return self
 
 
 class BundleDefaults(DefaultsModel):
@@ -137,7 +171,8 @@ class BundleDefaults(DefaultsModel):
         on_task_failure_emails: Addresses each task emails when it fails.
         tags: Tags added to the job.
         target: Defaults shared by every target.
-        targets: Overrides for individual targets.
+        targets: Each target's workspace settings and overrides. Every target
+            must be present.
     """
 
     on_job_failure_webhook_notification_ids: WebhookIds | None = None
@@ -145,8 +180,24 @@ class BundleDefaults(DefaultsModel):
     on_task_failure_webhook_notification_ids: WebhookIds | None = None
     on_task_failure_emails: EmailAddresses | None = None
     tags: Annotated[dict[TagKey, TagValue], Field(max_length=MAX_JOB_TAGS)]
-    target: TargetDefaults
-    targets: dict[TargetName, TargetOverrides] = {}
+    target: SharedTargetDefaults
+    targets: dict[TargetName, TargetOverrides]
+
+    @model_validator(mode="after")
+    def check_every_target(self) -> Self:
+        """Requires settings for every target, since each has its own workspace.
+
+        Returns:
+            The validated model.
+
+        Raises:
+            ValueError: If a target has no `[bundle.targets.<name>]` table.
+        """
+        missing = [name for name in TARGET_NAMES if name not in self.targets]
+        if missing:
+            tables = ", ".join(f"[bundle.targets.{name}]" for name in missing)
+            raise ValueError(f"missing {tables} with host and compute_policy")
+        return self
 
     @model_validator(mode="after")
     def check_tag_keys(self) -> Self:
@@ -172,16 +223,19 @@ class BundleDefaults(DefaultsModel):
             name: Target name, such as `dev`.
 
         Returns:
-            The shared target defaults with the target's overrides applied and
-            `{target}` in the service principal replaced by the name.
+            The target's workspace settings with the shared defaults for every
+            setting it does not override, and `{target}` in the service principal
+            and group names replaced by the name.
         """
-        overrides = self.targets.get(name)  # type: ignore[call-overload]
-        values = self.target.model_dump()
-        if overrides is not None:
-            values |= overrides.model_dump(exclude_none=True)
+        overrides = self.targets[name]  # type: ignore[index]
+        values = self.target.model_dump() | overrides.model_dump(exclude_none=True)
         values["service_principal"] = values["service_principal"].replace(
             TARGET_PLACEHOLDER, name
         )
+        for key in ("manage_groups", "run_groups", "view_groups"):
+            values[key] = [
+                group.replace(TARGET_PLACEHOLDER, name) for group in values[key]
+            ]
         return TargetDefaults.model_validate(values)
 
 

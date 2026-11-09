@@ -297,7 +297,9 @@ General rules:
 - A key set to `null` is the same as leaving it out.
 - `{env}` in paths and table names is replaced by the target name (`dev`, `qa`,
   `uat`, `prod`) when the job runs and in each target's DDL. It is the only
-  placeholder: any other `{...}`, such as `{dev}`, is rejected.
+  placeholder there: any other `{...}`, such as `{dev}`, is rejected.
+- `{target}` in `bundle.tags` values is replaced by the target name when the
+  bundle deploys. It is the only placeholder in tags.
 
 Column key: **Req** = required. **Default** = "defaults.toml" when a default exists
 there.
@@ -327,7 +329,7 @@ The whole section is optional.
 
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `tags` | map of string to string, at most 25 | No | defaults.toml | Job tags. Keys start with a letter and are not YAML words like `true` or `no`. |
+| `tags` | map of string to string, at most 25 | No | defaults.toml | Job tags. Keys start with a letter and are not YAML words like `true` or `no`. `{target}` in a value becomes the target's name at deploy, such as `environment: "{target}"`. |
 | `targets` | list of single-key maps | No | defaults.toml | Per-target settings. See below. |
 
 `bundle.targets`:
@@ -342,6 +344,12 @@ bundle:
   targets:
     - prod:
         host: "https://prod-workspace.cloud.databricks.com"
+        servicePrincipalPermissions: "can_run"
+        manageGroups:
+          - "prod_admins"
+        runGroups: []
+        viewGroups:
+          - "business_users"
         onJobFailureEmails:
           - "oncall@example.com"
         onTaskFailureEmails:
@@ -350,26 +358,33 @@ bundle:
 
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `host` | string: `https://…` | No | defaults.toml | Workspace URL. |
+| `host` | string: `https://…` | No | defaults.toml, per target | Workspace URL. |
 | `servicePrincipal` | string | No | defaults.toml | Display name of the service principal the job runs as. |
-| `computePolicy` | string | No | defaults.toml | Cluster policy ID the job's compute uses. |
+| `computePolicy` | string | No | defaults.toml, per target | Cluster policy ID the job's compute uses in the target's workspace. |
+| `servicePrincipalPermissions` | `"can_manage"` or `"can_run"` | No | defaults.toml, per target | Level the run-as `servicePrincipal` gets: CAN_MANAGE or CAN_RUN. |
+| `manageGroups` | list of strings | No | defaults.toml, per target | Groups with CAN_MANAGE. `[]` for none. |
+| `runGroups` | list of strings | No | defaults.toml, per target | Groups with CAN_RUN. `[]` for none. |
+| `viewGroups` | list of strings | No | defaults.toml, per target | Groups with CAN_VIEW. `[]` for none. |
 | `onJobFailureWebhookNotificationIds` | list of strings, at least 1 | No | — | Notification destination IDs the job notifies on failure. Not sent when left out. `prod` only; rejected on other targets. |
 | `onJobFailureEmails` | list of emails, at least 1 | No | — | Addresses the job emails on failure. Not sent when left out. `prod` only; rejected on other targets. |
 | `onTaskFailureWebhookNotificationIds` | list of strings, at least 1 | No | — | Notification destination IDs each task notifies on failure. Not sent when left out. `prod` only; rejected on other targets. |
 | `onTaskFailureEmails` | list of emails, at least 1 | No | — | Addresses each task emails on failure. Not sent when left out. `prod` only; rejected on other targets. |
-| `permissions` | map | No | defaults.toml | Job permissions. When set, it replaces the default permissions. |
 
-`bundle.targets.<target>.permissions`:
+Each target's `permissions` in `databricks.yml` are built from these fields:
 
-| Field | Type | Description |
-|---|---|---|
-| `canManage.servicePrincipal` | list of strings | Service principals with CAN_MANAGE. Only the target's `servicePrincipal` is allowed. |
-| `canManage.groups` | list of strings | Groups with CAN_MANAGE. |
-| `canRun.servicePrincipal` | list of strings | Service principals with CAN_RUN. Only the target's `servicePrincipal` is allowed. |
-| `canRun.groups` | list of strings | Groups with CAN_RUN. |
+```yaml
+permissions:
+  - service_principal_name: "${var.run-as}"
+    level: CAN_RUN            # from servicePrincipalPermissions
+  - group_name: "prod_admins"
+    level: CAN_MANAGE         # manageGroups
+  - group_name: "business_users"
+    level: CAN_VIEW           # viewGroups
+```
 
-The default permissions give CAN_MANAGE to the target's `servicePrincipal` and
-the default manage groups, and CAN_RUN to the default run groups.
+- The service principal always gets an entry.
+- A group can be listed only once across `manageGroups`, `runGroups`, and
+  `viewGroups`.
 
 ### `job`
 
@@ -554,3 +569,32 @@ Layout:
   runs. An invalid file stops the skill with `Invalid defaults file <path>: …`
   before anything is generated or created.
 - Set `SP_DYNAMO_FIREHOSE_S3_V1_DEFAULTS` to a path to use a different file.
+
+Target defaults:
+
+| Table | Holds |
+|---|---|
+| `[bundle.target]` | Settings shared by every target: `service_principal`. |
+| `[bundle.targets.<target>]` | Required for each of `dev`, `qa`, `uat`, `prod`: `host`, `compute_policy`, `service_principal_permissions` (`"can_manage"` or `"can_run"`), `manage_groups`, `run_groups`, `view_groups` (`[]` for none). Can also set `service_principal` to override the shared one. |
+
+`{target}` in `defaults.toml` becomes each target's name:
+
+| Where | Example | `qa` gets |
+|---|---|---|
+| `service_principal` | `"sp_ingestion_{target}"` | `sp_ingestion_qa` |
+| `manage_groups`, `run_groups`, `view_groups` | `["{target}_readers"]` | `qa_readers` |
+| `[bundle.tags]` values | `environment = "{target}"` | `qa`, at deploy |
+
+- Tag values keep `{target}` in the YAML `generate-yaml` writes. `scaffold`
+  renders it as `${bundle.target}` in the job file, filled in at deploy.
+- Paths and table names use `{env}` instead.
+
+```toml
+[bundle.targets.prod]
+host = "https://prod-workspace.cloud.databricks.com"
+compute_policy = "ABC123"
+service_principal_permissions = "can_run"
+manage_groups = ["prod_admins"]
+run_groups = []
+view_groups = ["business_users"]
+```

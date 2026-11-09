@@ -18,6 +18,8 @@ from pydantic import (
 from pydantic.alias_generators import to_camel
 
 ENV_PLACEHOLDER = "{env}"
+# Replaced by the target's name in the defaults file and job tags.
+TARGET_PLACEHOLDER = "{target}"
 PLACEHOLDER_PATTERN = re.compile(r"\{[^{}]*\}")
 
 
@@ -70,6 +72,40 @@ NonEmptyString = Annotated[str, StringConstraints(min_length=1)]
 # The only deployment targets. Each becomes a bundle target and an `{env}` value.
 TARGET_NAMES = ("dev", "qa", "uat", "prod")
 TargetName = Literal["dev", "qa", "uat", "prod"]
+# Permission level the run-as service principal gets on the bundle's resources.
+ServicePrincipalPermission = Literal["can_manage", "can_run"]
+# Bundle permission level for each kind of grant.
+PERMISSION_LEVELS = {
+    "can_manage": "CAN_MANAGE",
+    "can_run": "CAN_RUN",
+    "can_view": "CAN_VIEW",
+}
+GroupNames = list[NonEmptyString]
+
+
+def check_group_levels(
+    manage_groups: list[str], run_groups: list[str], view_groups: list[str]
+) -> None:
+    """Checks that each group gets only one permission level.
+
+    Args:
+        manage_groups: Groups with CAN_MANAGE.
+        run_groups: Groups with CAN_RUN.
+        view_groups: Groups with CAN_VIEW.
+
+    Raises:
+        ValueError: If a group is listed more than once, in one list or across
+            lists.
+    """
+    groups = [*manage_groups, *run_groups, *view_groups]
+    repeated = sorted({group for group in groups if groups.count(group) > 1})
+    if repeated:
+        raise ValueError(
+            "each group can be listed once across manage, run, and view groups, "
+            f"not: {', '.join(repeated)}"
+        )
+
+
 # The only target that sends job and task failure notifications.
 NOTIFICATION_TARGET = "prod"
 # Quoted in YAML, so 3.10 is not read as the number 3.1.
@@ -84,9 +120,42 @@ TagKey = Annotated[
     str,
     StringConstraints(max_length=127, pattern=r"^[A-Za-z][A-Za-z0-9_.:/=+@-]*$"),
 ]
-TagValue = Annotated[
-    str, StringConstraints(max_length=255, pattern=r"^[A-Za-z0-9 _.:/=+@-]*$")
-]
+TAG_VALUE_PATTERN = re.compile(r"[A-Za-z0-9 _.:/=+@-]*")
+MAX_TAG_VALUE_LENGTH = 255
+
+
+def check_tag_value(value: str) -> str:
+    """Checks a tag value against AWS tag rules for every target.
+
+    `{target}` is allowed and becomes the target's name when the bundle deploys,
+    so the value is checked with each target's name in its place.
+
+    Args:
+        value: Tag value from the YAML or defaults file.
+
+    Returns:
+        The value unchanged.
+
+    Raises:
+        ValueError: If, for any target, the value has characters AWS tags do not
+            allow or is longer than 255 characters.
+    """
+    for name in TARGET_NAMES:
+        resolved = value.replace(TARGET_PLACEHOLDER, name)
+        if not TAG_VALUE_PATTERN.fullmatch(resolved):
+            raise ValueError(
+                "tag values can only contain letters, digits, spaces, "
+                f"_ . : / = + @ -, and the {TARGET_PLACEHOLDER} placeholder"
+            )
+        if len(resolved) > MAX_TAG_VALUE_LENGTH:
+            raise ValueError(
+                f"tag values must be at most {MAX_TAG_VALUE_LENGTH} characters "
+                f"with {TARGET_PLACEHOLDER} replaced by the target's name"
+            )
+    return value
+
+
+TagValue = Annotated[str, AfterValidator(check_tag_value)]
 # Unquoted, YAML reads these as booleans or null instead of strings.
 YAML_RESERVED_WORDS = frozenset(
     {"true", "false", "null", "yes", "no", "on", "off", "y", "n"}

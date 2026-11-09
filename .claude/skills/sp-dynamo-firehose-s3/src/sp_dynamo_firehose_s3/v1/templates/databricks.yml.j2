@@ -83,19 +83,13 @@ targets:
 {% endif %}
     run_as:
       service_principal_name: "${var.run-as}"
-{% if not target.permissions.is_empty() %}
     permissions:
-{% for level, grantees in target.permissions.levels().items() %}
-{% for _ in grantees.service_principal %}
       - service_principal_name: "${var.run-as}"
-        level: {{ level }}
-{% endfor %}
-{% for group in grantees.groups %}
+        level: {{ target.service_principal_level }}
+{% for group, level in target.group_levels() %}
       - group_name: {{ group | yaml_string }}
         level: {{ level }}
 {% endfor %}
-{% endfor %}
-{% endif %}
 {% if not loop.last %}
 
 {% endif %}

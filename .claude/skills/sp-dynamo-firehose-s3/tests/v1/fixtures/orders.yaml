@@ -12,51 +12,49 @@ bundle:
     SOURCE: dynamo
   targets:
     - dev:
-        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        host: "https://dev-workspace.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_dev"
-        computePolicy: "XXXXXXXXX"
-        permissions:
-          canManage:
-            servicePrincipal:
-              - "sp_ingestion_dev"
-            groups:
-              - "data_engineers"
-              - "admins"
-          canRun:
-            groups:
-              - "data_analysts"
+        computePolicy: "DEVPOLICY"
+        servicePrincipalPermissions: "can_manage"
+        manageGroups:
+          - "data_engineers"
+          - "admins"
+        runGroups:
+          - "data_analysts"
+        viewGroups: []
     - qa:
-        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        host: "https://qa-workspace.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_qa"
-        computePolicy: "XXXXXXXXX"
-        permissions:
-          canManage:
-            servicePrincipal:
-              - "sp_ingestion_qa"
-            groups:
-              - "data_engineers"
-              - "admins"
-          canRun:
-            groups:
-              - "data_analysts"
+        computePolicy: "QAPOLICY"
+        servicePrincipalPermissions: "can_manage"
+        manageGroups:
+          - "data_engineers"
+          - "admins"
+        runGroups:
+          - "data_analysts"
+        viewGroups: []
     - uat:
-        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        host: "https://uat-workspace.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_uat"
-        computePolicy: "XXXXXXXXX"
-        permissions:
-          canManage:
-            servicePrincipal:
-              - "sp_ingestion_uat"
-            groups:
-              - "data_engineers"
-              - "admins"
-          canRun:
-            groups:
-              - "data_analysts"
+        computePolicy: "UATPOLICY"
+        servicePrincipalPermissions: "can_manage"
+        manageGroups:
+          - "data_engineers"
+          - "admins"
+        runGroups:
+          - "data_analysts"
+        viewGroups: []
     - prod:
-        host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+        host: "https://prod-workspace.cloud.databricks.com"
         servicePrincipal: "sp_ingestion_prod"
-        computePolicy: "XXXXXXXXX"
+        computePolicy: "PRODPOLICY"
+        servicePrincipalPermissions: "can_manage"
+        manageGroups:
+          - "data_engineers"
+          - "admins"
+        runGroups:
+          - "data_analysts"
+        viewGroups: []
         onJobFailureWebhookNotificationIds:
           - "XXXXXXXXX"
         onJobFailureEmails:
@@ -65,16 +63,6 @@ bundle:
           - "XXXXXXXXX"
         onTaskFailureEmails:
           - "jduran9987@gmail.com"
-        permissions:
-          canManage:
-            servicePrincipal:
-              - "sp_ingestion_prod"
-            groups:
-              - "data_engineers"
-              - "admins"
-          canRun:
-            groups:
-              - "data_analysts"
 
 job:
   executionMode: "continuous"

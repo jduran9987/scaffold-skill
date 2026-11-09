@@ -39,11 +39,11 @@ targets:
   dev:
     mode: production
     workspace:
-      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      host: "https://dev-workspace.cloud.databricks.com"
       root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
     variables:
       environment: dev
-      compute_policy_id: "XXXXXXXXX"
+      compute_policy_id: "DEVPOLICY"
       run-as:
         lookup:
           service_principal: "sp_ingestion_dev"
@@ -62,11 +62,11 @@ targets:
   qa:
     mode: production
     workspace:
-      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      host: "https://qa-workspace.cloud.databricks.com"
       root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
     variables:
       environment: qa
-      compute_policy_id: "XXXXXXXXX"
+      compute_policy_id: "QAPOLICY"
       run-as:
         lookup:
           service_principal: "sp_ingestion_qa"
@@ -85,11 +85,11 @@ targets:
   uat:
     mode: production
     workspace:
-      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      host: "https://uat-workspace.cloud.databricks.com"
       root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
     variables:
       environment: uat
-      compute_policy_id: "XXXXXXXXX"
+      compute_policy_id: "UATPOLICY"
       run-as:
         lookup:
           service_principal: "sp_ingestion_uat"
@@ -108,11 +108,11 @@ targets:
   prod:
     mode: production
     workspace:
-      host: "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+      host: "https://prod-workspace.cloud.databricks.com"
       root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
     variables:
       environment: prod
-      compute_policy_id: "XXXXXXXXX"
+      compute_policy_id: "PRODPOLICY"
       run-as:
         lookup:
           service_principal: "sp_ingestion_prod"

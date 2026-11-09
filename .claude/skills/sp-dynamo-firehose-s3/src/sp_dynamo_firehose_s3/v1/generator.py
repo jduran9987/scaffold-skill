@@ -20,6 +20,7 @@ from sp_dynamo_firehose_s3.v1.fields import (
     PIPELINE_NAME_PATTERN,
     SILVER_METADATA,
     TARGET_NAMES,
+    TARGET_PLACEHOLDER,
     MetadataColumn,
 )
 from sp_dynamo_firehose_s3.v1.schema_inference import InferredSchema
@@ -44,6 +45,22 @@ LAYER_DESCRIPTIONS = {
 }
 
 
+BUNDLE_TARGET = "${bundle.target}"
+
+
+def bundle_target(value: str) -> str:
+    """Replaces `{target}` with the bundle's target substitution.
+
+    Args:
+        value: Value from the YAML, such as a job tag value.
+
+    Returns:
+        The value with each `{target}` replaced by `${bundle.target}`, which the
+        bundle fills in with the target's name when it deploys.
+    """
+    return value.replace(TARGET_PLACEHOLDER, BUNDLE_TARGET)
+
+
 def build_environment() -> Environment:
     """Builds the Jinja environment for the v1 templates.
 
@@ -64,6 +81,7 @@ def build_environment() -> Environment:
     environment.filters["sql_identifier"] = sql_identifier
     environment.filters["sql_table"] = sql_table
     environment.filters["md_cell"] = md_cell
+    environment.filters["bundle_target"] = bundle_target
     return environment
 
 

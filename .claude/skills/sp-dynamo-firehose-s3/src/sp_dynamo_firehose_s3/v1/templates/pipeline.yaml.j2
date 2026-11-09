@@ -18,6 +18,21 @@ bundle:
         host: {{ target.host | yaml_string }}
         servicePrincipal: {{ target.service_principal | yaml_string }}
         computePolicy: {{ target.compute_policy | yaml_string }}
+        servicePrincipalPermissions: {{ target.service_principal_permissions | yaml_string }}
+{% for key, groups in [
+  ("manageGroups", target.manage_groups),
+  ("runGroups", target.run_groups),
+  ("viewGroups", target.view_groups),
+] %}
+{% if groups %}
+        {{ key }}:
+{% for group in groups %}
+          - {{ group | yaml_string }}
+{% endfor %}
+{% else %}
+        {{ key }}: []
+{% endif %}
+{% endfor %}
 {% if name == notification_target %}
         # Only prod accepts failure notifications. Remove any you don't want sent.
 {% for key, values in [
@@ -32,22 +47,6 @@ bundle:
 {% endfor %}
 {% endfor %}
 {% endif %}
-        permissions:
-{% for level, grantees in [("canManage", target.permissions.can_manage), ("canRun", target.permissions.can_run)] %}
-          {{ level }}:
-{% if grantees.service_principal %}
-            servicePrincipal:
-{% for service_principal in grantees.service_principal %}
-              - {{ service_principal | yaml_string }}
-{% endfor %}
-{% endif %}
-{% if grantees.groups %}
-            groups:
-{% for group in grantees.groups %}
-              - {{ group | yaml_string }}
-{% endfor %}
-{% endif %}
-{% endfor %}
 {% endfor %}
 
 job:

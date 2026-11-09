@@ -30,23 +30,54 @@ on_job_failure_emails = ["jduran9987@gmail.com"]
 on_task_failure_webhook_notification_ids = ["XXXXXXXXX"]
 on_task_failure_emails = ["jduran9987@gmail.com"]
 
+# Job tags. `{target}` in a value becomes the target's name, such as prod.
 [bundle.tags]
 project = "orders"
 SOURCE = "dynamo"
 
-# Defaults for every target (dev, qa, uat, prod). `{target}` in
-# service_principal is replaced by the target's name.
+# Defaults shared by every target. `{target}` in service_principal is replaced
+# by the target's name.
 [bundle.target]
+service_principal = "sp_ingestion_{target}"
+
+# Each target's workspace settings, all required:
+# - host, compute_policy: the target's workspace and cluster policy.
+# - service_principal_permissions: "can_manage" or "can_run", the level the
+#   run-as service principal gets.
+# - manage_groups, run_groups, view_groups: groups with CAN_MANAGE, CAN_RUN, and
+#   CAN_VIEW. Use [] for none. `{target}` is replaced by the target's name.
+# A target table can also set service_principal to override the shared one.
+[bundle.targets.dev]
 host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
 compute_policy = "XXXXXXXXX"
-service_principal = "sp_ingestion_{target}"
-# The target's service principal also gets CAN_MANAGE.
+service_principal_permissions = "can_manage"
 manage_groups = ["data_engineers", "admins"]
 run_groups = ["data_analysts"]
+view_groups = []
 
-# Optional overrides for one target, with any of the [bundle.target] keys.
-# [bundle.targets.prod]
-# host = "https://my-prod-workspace.cloud.databricks.com"
+[bundle.targets.qa]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+[bundle.targets.uat]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+[bundle.targets.prod]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
 
 [job]
 # "continuous" or "batch".

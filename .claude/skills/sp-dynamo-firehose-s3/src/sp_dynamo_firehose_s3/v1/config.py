@@ -13,11 +13,12 @@ from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS, TargetDefaults
+from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS
 from sp_dynamo_firehose_s3.v1.fields import (
     KEY_DYNAMO_TYPES,
     MAX_JOB_TAGS,
     NOTIFICATION_TARGET,
+    PERMISSION_LEVELS,
     QUARTZ_FIELD_PATTERN,
     SILVER_METADATA_COLUMNS,
     TARGET_NAMES,
@@ -28,10 +29,12 @@ from sp_dynamo_firehose_s3.v1.fields import (
     ConfiguredColumnName,
     DynamoType,
     EmailAddresses,
+    GroupNames,
     NonEmptyString,
     PipelineName,
     PythonVersion,
     S3Path,
+    ServicePrincipalPermission,
     StrictModel,
     TableName,
     TagKey,
@@ -41,6 +44,7 @@ from sp_dynamo_firehose_s3.v1.fields import (
     UvBuildVersion,
     WebhookIds,
     WorkspaceHost,
+    check_group_levels,
 )
 
 
@@ -61,49 +65,6 @@ class Metadata(StrictModel):
     description: NonEmptyString
     python_version: PythonVersion = DEFAULTS.metadata.python_version
     uv_build_version: UvBuildVersion = DEFAULTS.metadata.uv_build_version
-
-
-class Grantees(StrictModel):
-    """Principals that receive one permission level.
-
-    Attributes:
-        service_principal: Display names of service principals.
-        groups: Workspace group names.
-    """
-
-    service_principal: list[NonEmptyString] = []
-    groups: list[NonEmptyString] = []
-
-
-class Permissions(StrictModel):
-    """Permissions on the bundle's resources in one target.
-
-    Attributes:
-        can_manage: Principals with the CAN_MANAGE level.
-        can_run: Principals with the CAN_RUN level.
-    """
-
-    can_manage: Grantees = Grantees()
-    can_run: Grantees = Grantees()
-
-    def levels(self) -> dict[str, Grantees]:
-        """Maps each bundle permission level to its principals.
-
-        Returns:
-            The principals keyed by level, such as `CAN_MANAGE`.
-        """
-        return {"CAN_MANAGE": self.can_manage, "CAN_RUN": self.can_run}
-
-    def is_empty(self) -> bool:
-        """Checks whether any principal is granted a level.
-
-        Returns:
-            True if no level names a service principal or group.
-        """
-        return not any(
-            grantees.service_principal or grantees.groups
-            for grantees in self.levels().values()
-        )
 
 
 def check_quartz_cron(expression: str) -> None:
@@ -132,28 +93,6 @@ def check_quartz_cron(expression: str) -> None:
             "job.batchSchedule must set exactly one of day of month (field 4) and "
             f'day of week (field 6) to "?", not "{expression}"'
         )
-
-
-def default_permissions(
-    service_principal: object, defaults: TargetDefaults
-) -> dict[str, object]:
-    """Builds a target's default permissions in YAML form.
-
-    Args:
-        service_principal: The target's run-as service principal.
-        defaults: The target's defaults, with its permission groups.
-
-    Returns:
-        Permissions that let the service principal and the manage groups manage the
-        job and the run groups run it.
-    """
-    return {
-        "canManage": {
-            "servicePrincipal": [service_principal],
-            "groups": list(defaults.manage_groups),
-        },
-        "canRun": {"groups": list(defaults.run_groups)},
-    }
 
 
 def parse_target_entries(entries: object) -> dict[str, object]:
@@ -206,9 +145,8 @@ def fill_target_defaults(name: str, settings: object) -> object:
 
     Returns:
         The settings with every missing key set to the target's default, or the
-        value unchanged if it is not a mapping. Default permissions name the
-        target's service principal, including one set in the YAML. Notifications
-        are never filled in.
+        value unchanged if it is not a mapping. Notifications are never filled
+        in.
 
     Raises:
         ValueError: If a target other than prod sets notifications.
@@ -222,6 +160,12 @@ def fill_target_defaults(name: str, settings: object) -> object:
     filled.setdefault("host", defaults.host)
     filled.setdefault("computePolicy", defaults.compute_policy)
     filled.setdefault("servicePrincipal", defaults.service_principal)
+    filled.setdefault(
+        "servicePrincipalPermissions", defaults.service_principal_permissions
+    )
+    filled.setdefault("manageGroups", list(defaults.manage_groups))
+    filled.setdefault("runGroups", list(defaults.run_groups))
+    filled.setdefault("viewGroups", list(defaults.view_groups))
     if name != NOTIFICATION_TARGET:
         rejected = [key for key in NOTIFICATION_KEYS if key in filled]
         if rejected:
@@ -229,9 +173,6 @@ def fill_target_defaults(name: str, settings: object) -> object:
                 f"bundle.targets.{name} cannot set {', '.join(rejected)}: "
                 f"notifications are only sent by the {NOTIFICATION_TARGET} target"
             )
-    filled.setdefault(
-        "permissions", default_permissions(filled["servicePrincipal"], defaults)
-    )
     return filled
 
 
@@ -242,13 +183,17 @@ class Target(StrictModel):
         host: URL of the target's workspace.
         compute_policy: ID of the cluster policy the tasks' compute uses.
         service_principal: Display name of the service principal the job runs as.
+        service_principal_permissions: Level the service principal gets on the
+            bundle's resources: `can_manage` or `can_run`.
+        manage_groups: Groups with CAN_MANAGE.
+        run_groups: Groups with CAN_RUN.
+        view_groups: Groups with CAN_VIEW.
         on_job_failure_webhook_notification_ids: IDs of the notification
             destinations the job notifies when a run fails.
         on_job_failure_emails: Addresses the job emails when a run fails.
         on_task_failure_webhook_notification_ids: IDs of the notification
             destinations each task notifies when it fails.
         on_task_failure_emails: Addresses each task emails when it fails.
-        permissions: Permissions on the bundle's resources.
 
     Notifications can only be set for prod and are not sent when left out.
     Every other setting the YAML leaves out comes from `defaults.toml`, applied
@@ -258,33 +203,46 @@ class Target(StrictModel):
     host: WorkspaceHost
     compute_policy: NonEmptyString
     service_principal: NonEmptyString
+    service_principal_permissions: ServicePrincipalPermission
+    manage_groups: GroupNames
+    run_groups: GroupNames
+    view_groups: GroupNames
     on_job_failure_webhook_notification_ids: WebhookIds | None = None
     on_job_failure_emails: EmailAddresses | None = None
     on_task_failure_webhook_notification_ids: WebhookIds | None = None
     on_task_failure_emails: EmailAddresses | None = None
-    permissions: Permissions
 
     @model_validator(mode="after")
-    def check_service_principals(self) -> Self:
-        """Allows only the run-as service principal in permissions.
-
-        The bundle references service principals by application ID, and only the
-        run-as service principal's ID is looked up.
+    def check_groups(self) -> Self:
+        """Allows each group at only one permission level.
 
         Returns:
             The validated model.
-
-        Raises:
-            ValueError: If permissions name another service principal.
         """
-        for grantees in self.permissions.levels().values():
-            others = set(grantees.service_principal) - {self.service_principal}
-            if others:
-                raise ValueError(
-                    "permissions can only name the target's servicePrincipal, "
-                    f"not: {', '.join(sorted(others))}"
-                )
+        check_group_levels(self.manage_groups, self.run_groups, self.view_groups)
         return self
+
+    @property
+    def service_principal_level(self) -> str:
+        """The bundle permission level of the run-as service principal.
+
+        Returns:
+            `CAN_MANAGE` or `CAN_RUN`.
+        """
+        return PERMISSION_LEVELS[self.service_principal_permissions]
+
+    def group_levels(self) -> list[tuple[str, str]]:
+        """Lists each group with its bundle permission level.
+
+        Returns:
+            Pairs of group name and level, manage groups first, then run and view
+            groups.
+        """
+        return [
+            *((group, PERMISSION_LEVELS["can_manage"]) for group in self.manage_groups),
+            *((group, PERMISSION_LEVELS["can_run"]) for group in self.run_groups),
+            *((group, PERMISSION_LEVELS["can_view"]) for group in self.view_groups),
+        ]
 
 
 class Bundle(StrictModel):

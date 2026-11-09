@@ -23,7 +23,7 @@ resources:
 {% if bundle.tags %}
       tags:
 {% for key, value in bundle.tags.items() %}
-        {{ key }}: {{ value | yaml_string }}
+        {{ key }}: {{ value | bundle_target | yaml_string }}
 {% endfor %}
 {% endif %}
 {% if prod.on_job_failure_emails %}

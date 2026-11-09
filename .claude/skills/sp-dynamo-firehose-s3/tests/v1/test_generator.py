@@ -169,6 +169,23 @@ def test_tag_keys_are_unquoted(raw_config, tmp_path):
     assert job["tags"] == {"SOURCE": "dynamo", "cost:center": "a b/c"}
 
 
+def test_target_placeholder_in_tags_becomes_the_bundle_target(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"environment": "{target}", "app": "orders-{target}"}
+
+    source = generated_sources(raw_config, tmp_path)[JOB_RESOURCE]
+
+    assert '        environment: "${bundle.target}"\n' in source
+    assert '        app: "orders-${bundle.target}"\n' in source
+
+
+def test_tag_value_with_target_fits_for_every_target(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"team": "v" * 251 + "{target}"}
+
+    job = load_job(raw_config, tmp_path)
+
+    assert job["tags"] == {"team": "v" * 251 + "${bundle.target}"}
+
+
 @pytest.mark.parametrize(
     "tags",
     [
@@ -182,6 +199,10 @@ def test_tag_keys_are_unquoted(raw_config, tmp_path):
         {"team": "a#b"},
         {"k" * 128: "x"},
         {"team": "v" * 256},
+        {"team": "v" * 252 + "{target}"},
+        {"env": "{env}"},
+        {"env": "{Target}"},
+        {"env": "${bundle.target}"},
         {f"tag{i}": "x" for i in range(26)},
         [{"team": "x"}],
     ],
@@ -267,7 +288,7 @@ def test_targets_come_from_bundle(raw_config, tmp_path):
     prod = bundle["targets"]["prod"]
     assert prod["variables"] == {
         "environment": "prod",
-        "compute_policy_id": "XXXXXXXXX",
+        "compute_policy_id": "PRODPOLICY",
         "run-as": {"lookup": {"service_principal": "sp_ingestion_prod"}},
         "job_failure_webhooks": [{"id": "XXXXXXXXX"}],
         "job_failure_emails": ["jduran9987@gmail.com"],
@@ -280,22 +301,33 @@ def test_targets_come_from_bundle(raw_config, tmp_path):
     )
 
 
-def test_run_as_service_principal_permission_uses_variable(raw_config, tmp_path):
-    dev_target(raw_config)["permissions"] = {
-        "canRun": {"servicePrincipal": ["sp_ingestion_dev"], "groups": ["g1"]}
-    }
+def test_permissions_come_from_the_target(raw_config, tmp_path):
+    dev_target(raw_config).update(
+        servicePrincipalPermissions="can_run",
+        manageGroups=["leads"],
+        runGroups=[],
+        viewGroups=["analysts", "auditors"],
+    )
 
     bundle = yaml.safe_load(generated_sources(raw_config, tmp_path)["databricks.yml"])
 
     assert bundle["targets"]["dev"]["permissions"] == [
         {"service_principal_name": "${var.run-as}", "level": "CAN_RUN"},
-        {"group_name": "g1", "level": "CAN_RUN"},
+        {"group_name": "leads", "level": "CAN_MANAGE"},
+        {"group_name": "analysts", "level": "CAN_VIEW"},
+        {"group_name": "auditors", "level": "CAN_VIEW"},
     ]
 
 
-def test_permissions_default_to_the_run_as_service_principal(raw_config, tmp_path):
+def test_permissions_default_per_target(raw_config, tmp_path):
+    for key in (
+        "servicePrincipalPermissions",
+        "manageGroups",
+        "runGroups",
+        "viewGroups",
+    ):
+        del dev_target(raw_config)[key]
     dev_target(raw_config)["servicePrincipal"] = "sp_custom"
-    del dev_target(raw_config)["permissions"]
 
     bundle = yaml.safe_load(generated_sources(raw_config, tmp_path)["databricks.yml"])
 
@@ -309,12 +341,14 @@ def test_permissions_default_to_the_run_as_service_principal(raw_config, tmp_pat
     ]
 
 
-def test_empty_permissions_are_left_out(raw_config, tmp_path):
-    dev_target(raw_config)["permissions"] = {}
+def test_service_principal_is_the_only_grant_without_groups(raw_config, tmp_path):
+    dev_target(raw_config).update(manageGroups=[], runGroups=[], viewGroups=[])
 
     bundle = yaml.safe_load(generated_sources(raw_config, tmp_path)["databricks.yml"])
 
-    assert "permissions" not in bundle["targets"]["dev"]
+    assert bundle["targets"]["dev"]["permissions"] == [
+        {"service_principal_name": "${var.run-as}", "level": "CAN_MANAGE"}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -351,15 +385,23 @@ def test_empty_permissions_are_left_out(raw_config, tmp_path):
         (lambda c: dev_target(c).update(computePolicy=""), "computePolicy"),
         (lambda c: dev_target(c).update(compute_policy="x"), "compute_policy"),
         (
-            lambda c: dev_target(c)["permissions"]["canManage"].update(
-                servicePrincipal=["sp_other"]
-            ),
-            "not: sp_other",
+            lambda c: dev_target(c).update(servicePrincipalPermissions="can_view"),
+            "servicePrincipalPermissions",
         ),
         (
-            lambda c: dev_target(c)["permissions"].update(canView={"groups": ["g"]}),
-            "canView",
+            lambda c: dev_target(c).update(servicePrincipalPermissions="CAN_MANAGE"),
+            "servicePrincipalPermissions",
         ),
+        (
+            lambda c: dev_target(c).update(viewGroups=["data_analysts"]),
+            "listed once across manage, run, and view groups, not: data_analysts",
+        ),
+        (
+            lambda c: dev_target(c).update(runGroups=["g", "g"]),
+            "not: g",
+        ),
+        (lambda c: dev_target(c).update(viewGroups=[""]), "viewGroups"),
+        (lambda c: dev_target(c).update(permissions={}), "permissions"),
     ],
 )
 def test_invalid_bundle_settings_are_rejected(raw_config, tmp_path, change, message):
@@ -959,7 +1001,7 @@ def test_null_optional_keys_take_their_defaults(raw_config, tmp_path):
     raw_config["metadata"]["pythonVersion"] = None
     raw_config["metadata"]["uvBuildVersion"] = None
     raw_config["bundle"]["tags"] = None
-    dev_target(raw_config)["permissions"] = None
+    dev_target(raw_config)["viewGroups"] = None
     dev_target(raw_config)["host"] = None
     raw_config["bundle"]["targets"][1] = {"qa": None}
 
@@ -1017,8 +1059,6 @@ SECTIONS = {
     "metadata": lambda c: c["metadata"],
     "bundle": lambda c: c["bundle"],
     "target": dev_target,
-    "permissions": lambda c: dev_target(c)["permissions"],
-    "grantees": lambda c: dev_target(c)["permissions"]["canManage"],
     "job": lambda c: c["job"],
     "bronze": lambda c: c["job"]["bronze"],
     "silver": lambda c: c["job"]["silver"],
@@ -1050,7 +1090,7 @@ def test_unknown_keys_are_rejected_in_every_section(raw_config, tmp_path, sectio
         lambda c: c["bundle"].update(tags={"a": 1}),
         lambda c: prod_target(c).update(onJobFailureEmails="a@example.com"),
         lambda c: dev_target(c).update(computePolicy=123),
-        lambda c: dev_target(c)["permissions"]["canRun"].update(groups="g"),
+        lambda c: dev_target(c).update(runGroups="g"),
         lambda c: c["schema"].update(primaryKeys="id"),
         lambda c: c["schema"]["columns"][0].update(description=5),
         lambda c: c.update(job=["bronze"]),
