@@ -20,7 +20,6 @@ from sp_dynamo_firehose_s3.v1.fields import (
     PIPELINE_NAME_PATTERN,
     SILVER_METADATA,
     TARGET_NAMES,
-    TARGET_PLACEHOLDER,
     MetadataColumn,
 )
 from sp_dynamo_firehose_s3.v1.schema_inference import InferredSchema
@@ -49,16 +48,16 @@ BUNDLE_TARGET = "${bundle.target}"
 
 
 def bundle_target(value: str) -> str:
-    """Replaces `{target}` with the bundle's target substitution.
+    """Replaces `{env}` with the bundle's target substitution.
 
     Args:
         value: Value from the YAML, such as a job tag value.
 
     Returns:
-        The value with each `{target}` replaced by `${bundle.target}`, which the
+        The value with each `{env}` replaced by `${bundle.target}`, which the
         bundle fills in with the target's name when it deploys.
     """
-    return value.replace(TARGET_PLACEHOLDER, BUNDLE_TARGET)
+    return value.replace(ENV_PLACEHOLDER, BUNDLE_TARGET)
 
 
 def build_environment() -> Environment:
@@ -541,7 +540,7 @@ def render_config_template(schema: InferredSchema, table: str) -> str:
             uv_build_version=DEFAULTS.metadata.uv_build_version,
             execution_mode=DEFAULTS.job.execution_mode,
             trigger_interval=DEFAULTS.job.trigger_interval,
-            upsert_latest_key=DEFAULTS.job.upsert_latest_key,
+            upsert_latest_key=DEFAULTS.job.gold.upsert_latest_key,
             layers={
                 "bronze": DEFAULTS.job.bronze,
                 "silver": DEFAULTS.job.silver,

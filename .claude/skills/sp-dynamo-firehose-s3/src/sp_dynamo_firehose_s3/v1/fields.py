@@ -5,6 +5,7 @@ types the config models use.
 """
 
 import re
+from contextvars import ContextVar
 from typing import Annotated, Literal, NamedTuple
 
 from pydantic import (
@@ -17,14 +18,20 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+# Becomes the target's name, such as prod.
 ENV_PLACEHOLDER = "{env}"
-# Replaced by the target's name in the defaults file and job tags.
-TARGET_PLACEHOLDER = "{target}"
+# Becomes the pipeline's `metadata.name` when a pipeline YAML is validated.
+NAME_PLACEHOLDER = "{name}"
+# Becomes `metadata.name` with hyphens replaced by underscores, for table names.
+TABLE_PLACEHOLDER = "{table}"
+PLACEHOLDERS = (ENV_PLACEHOLDER, NAME_PLACEHOLDER, TABLE_PLACEHOLDER)
+# The `metadata.name` of the pipeline YAML being validated, if any.
+PIPELINE_NAME: ContextVar[str | None] = ContextVar("pipeline_name", default=None)
 PLACEHOLDER_PATTERN = re.compile(r"\{[^{}]*\}")
 
 
 def check_placeholders(value: str) -> str:
-    """Rejects placeholders other than `{env}`.
+    """Rejects placeholders other than `{env}`, `{name}`, and `{table}`.
 
     Args:
         value: Path or table name from the YAML or defaults file.
@@ -35,12 +42,61 @@ def check_placeholders(value: str) -> str:
     Raises:
         ValueError: If the value contains any other `{...}` placeholder.
     """
-    others = sorted(set(PLACEHOLDER_PATTERN.findall(value)) - {ENV_PLACEHOLDER})
+    others = sorted(set(PLACEHOLDER_PATTERN.findall(value)) - set(PLACEHOLDERS))
     if others:
         raise ValueError(
-            f"only the {ENV_PLACEHOLDER} placeholder is supported, not: "
-            f"{', '.join(others)}"
+            f"only the {', '.join(PLACEHOLDERS)} placeholders are supported, "
+            f"not: {', '.join(others)}"
         )
+    return value
+
+
+def resolve_name(value: object) -> object:
+    """Replaces `{name}` and `{table}` using the YAML being validated.
+
+    `{name}` becomes its `metadata.name`, and `{table}` the same name with
+    hyphens replaced by underscores.
+
+    Args:
+        value: A string, or a list or mapping holding strings. Mapping keys are
+            not changed.
+
+    Returns:
+        The value with both placeholders replaced in every string, or the value
+        unchanged if no pipeline YAML is being validated.
+    """
+    name = PIPELINE_NAME.get()
+    if name is None:
+        return value
+    if isinstance(value, str):
+        return value.replace(NAME_PLACEHOLDER, name).replace(
+            TABLE_PLACEHOLDER, name.replace("-", "_")
+        )
+    if isinstance(value, list):
+        return [resolve_name(item) for item in value]
+    if isinstance(value, dict):
+        return {key: resolve_name(item) for key, item in value.items()}
+    return value
+
+
+def resolve_env(value: object, target: str) -> object:
+    """Replaces `{env}` with the target's name in a setting's value.
+
+    Args:
+        value: A string, a list of strings, or any other value.
+        target: Target name, such as `prod`.
+
+    Returns:
+        The value with `{env}` replaced in every string, or the value unchanged
+        if it holds no strings.
+
+    Raises:
+        ValueError: If a string contains any other `{...}` placeholder.
+    """
+    if isinstance(value, str):
+        return check_placeholders(value).replace(ENV_PLACEHOLDER, target)
+    if isinstance(value, list):
+        return [resolve_env(item, target) for item in value]
     return value
 
 
@@ -127,8 +183,11 @@ MAX_TAG_VALUE_LENGTH = 255
 def check_tag_value(value: str) -> str:
     """Checks a tag value against AWS tag rules for every target.
 
-    `{target}` is allowed and becomes the target's name when the bundle deploys,
-    so the value is checked with each target's name in its place.
+    `{env}` is allowed and becomes the target's name when the bundle deploys,
+    so the value is checked with each target's name in its place. `{name}` and
+    `{table}` are allowed in the defaults file and are replaced before a
+    pipeline YAML's tags are checked, so they are checked here as a one-letter
+    name.
 
     Args:
         value: Tag value from the YAML or defaults file.
@@ -141,16 +200,18 @@ def check_tag_value(value: str) -> str:
             allow or is longer than 255 characters.
     """
     for name in TARGET_NAMES:
-        resolved = value.replace(TARGET_PLACEHOLDER, name)
+        resolved = value.replace(ENV_PLACEHOLDER, name)
+        for placeholder in (NAME_PLACEHOLDER, TABLE_PLACEHOLDER):
+            resolved = resolved.replace(placeholder, "a")
         if not TAG_VALUE_PATTERN.fullmatch(resolved):
             raise ValueError(
                 "tag values can only contain letters, digits, spaces, "
-                f"_ . : / = + @ -, and the {TARGET_PLACEHOLDER} placeholder"
+                f"_ . : / = + @ -, and the {', '.join(PLACEHOLDERS)} placeholders"
             )
         if len(resolved) > MAX_TAG_VALUE_LENGTH:
             raise ValueError(
                 f"tag values must be at most {MAX_TAG_VALUE_LENGTH} characters "
-                f"with {TARGET_PLACEHOLDER} replaced by the target's name"
+                f"with {ENV_PLACEHOLDER} replaced by the target's name"
             )
     return value
 

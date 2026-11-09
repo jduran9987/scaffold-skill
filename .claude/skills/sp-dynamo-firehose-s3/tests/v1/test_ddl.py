@@ -94,13 +94,15 @@ def test_table_names_use_the_target_name(raw_config, target):
     [
         ("bronze", "targetTable", "{dev}.bronze.orders"),
         ("silver", "checkpointPath", "s3://{environment}-lake/cp/"),
-        ("bronze", "sourcePath", "s3://{env}-lake/{table}/"),
+        ("bronze", "sourcePath", "s3://{env}-lake/{tbl}/"),
     ],
 )
 def test_placeholders_other_than_env_are_rejected(raw_config, layer, key, value):
     raw_config["job"][layer][key] = value
 
-    with pytest.raises(ValidationError, match="only the {env} placeholder"):
+    with pytest.raises(
+        ValidationError, match="only the {env}, {name}, {table} placeholders"
+    ):
         PipelineConfig.model_validate(raw_config)
 
 

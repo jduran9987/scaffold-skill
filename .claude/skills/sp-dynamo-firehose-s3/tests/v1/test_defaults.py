@@ -40,11 +40,11 @@ def test_service_principal_placeholder_is_replaced(tmp_path, monkeypatch):
     assert defaults.bundle.for_target("uat").service_principal == "sp_ingestion_uat"
 
 
-def test_target_placeholder_in_group_names_is_replaced(tmp_path, monkeypatch):
+def test_env_placeholder_in_group_names_is_replaced(tmp_path, monkeypatch):
     text = TEST_COPY.replace(
         'manage_groups = ["data_engineers", "admins"]',
-        'manage_groups = ["data_engineers_{target}", "admins"]',
-    ).replace('run_groups = ["data_analysts"]', 'run_groups = ["{target}_readers"]')
+        'manage_groups = ["data_engineers_{env}", "admins"]',
+    ).replace('run_groups = ["data_analysts"]', 'run_groups = ["{env}_readers"]')
 
     defaults = load_from(tmp_path, monkeypatch, text)
 
@@ -53,12 +53,12 @@ def test_target_placeholder_in_group_names_is_replaced(tmp_path, monkeypatch):
     assert qa.run_groups == ["qa_readers"]
 
 
-def test_target_placeholder_in_tags_is_kept(tmp_path, monkeypatch):
-    text = TEST_COPY.replace('SOURCE = "dynamo"', 'environment = "{target}"')
+def test_env_placeholder_in_tags_is_kept(tmp_path, monkeypatch):
+    text = TEST_COPY.replace('SOURCE = "dynamo"', 'environment = "{env}"')
 
     defaults = load_from(tmp_path, monkeypatch, text)
 
-    assert defaults.bundle.tags["environment"] == "{target}"
+    assert defaults.bundle.tags["environment"] == "{env}"
 
 
 def test_notification_defaults_are_optional(tmp_path, monkeypatch):
@@ -161,6 +161,21 @@ def test_each_target_has_its_own_workspace(tmp_path, monkeypatch):
         ("[job]", "[job]\n[bundle.targets.staging]", "staging"),
         ("[bundle.targets.qa]\n", "[bundle.targets.qa_old]\n", "qa_old"),
         (
+            'service_principal = "sp_ingestion_{env}"',
+            'service_principal = "sp_ingestion_{target}"',
+            r"only the \{env\}, \{name\}, \{table\} placeholders",
+        ),
+        (
+            'SOURCE = "dynamo"',
+            'environment = "{target}"',
+            "tag values",
+        ),
+        (
+            'trigger_interval = "1 minute"\n',
+            'trigger_interval = "1 minute"\nupsert_latest_key = "_event_timestamp"\n',
+            "upsert_latest_key",
+        ),
+        (
             'QAPOLICY"\nservice_principal_permissions = "can_manage"',
             'QAPOLICY"',
             "service_principal_permissions",
@@ -211,7 +226,7 @@ def test_each_target_has_its_own_workspace(tmp_path, monkeypatch):
         (
             '[job.silver]\ncheckpoint_path = ""',
             '[job.silver]\ncheckpoint_path = "s3://{dev}-lake/cp/"',
-            "only the {env} placeholder",
+            "only the {env}, {name}, {table} placeholders",
         ),
         ('aws_region = "us-east-1"', 'aws_region = "us east"', "aws_region"),
         ("buffer_size_mb = 128", "buffer_size_mb = 32", "buffer_size_mb"),
@@ -259,8 +274,8 @@ CUSTOM = (
     .replace('projects_dir = "dabs"', 'projects_dir = "bundles"')
     .replace('python_version = "3.12"', 'python_version = "3.13"')
     .replace(
-        'service_principal = "sp_ingestion_{target}"',
-        'service_principal = "sp_{target}_etl"',
+        'service_principal = "sp_ingestion_{env}"',
+        'service_principal = "sp_{env}_etl"',
     )
     .replace('trigger_interval = "1 minute"', 'trigger_interval = "5 minutes"')
     .replace(

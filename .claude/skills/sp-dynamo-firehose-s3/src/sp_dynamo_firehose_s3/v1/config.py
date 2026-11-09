@@ -11,7 +11,7 @@ required keys fail as missing.
 import re
 from typing import Any, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, ModelWrapValidatorHandler, model_validator
 
 from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS
 from sp_dynamo_firehose_s3.v1.fields import (
@@ -19,6 +19,8 @@ from sp_dynamo_firehose_s3.v1.fields import (
     MAX_JOB_TAGS,
     NOTIFICATION_TARGET,
     PERMISSION_LEVELS,
+    PIPELINE_NAME,
+    PIPELINE_NAME_PATTERN,
     QUARTZ_FIELD_PATTERN,
     SILVER_METADATA_COLUMNS,
     TARGET_NAMES,
@@ -45,6 +47,8 @@ from sp_dynamo_firehose_s3.v1.fields import (
     WebhookIds,
     WorkspaceHost,
     check_group_levels,
+    resolve_env,
+    resolve_name,
 )
 
 
@@ -145,11 +149,12 @@ def fill_target_defaults(name: str, settings: object) -> object:
 
     Returns:
         The settings with every missing key set to the target's default, or the
-        value unchanged if it is not a mapping. Notifications are never filled
-        in.
+        value unchanged if it is not a mapping. `{env}` in every value is replaced
+        by the target's name. Notifications are never filled in.
 
     Raises:
-        ValueError: If a target other than prod sets notifications.
+        ValueError: If a target other than prod sets notifications, or a value
+            contains a placeholder other than `{env}`.
     """
     if settings is None:
         settings = {}
@@ -166,6 +171,9 @@ def fill_target_defaults(name: str, settings: object) -> object:
     filled.setdefault("manageGroups", list(defaults.manage_groups))
     filled.setdefault("runGroups", list(defaults.run_groups))
     filled.setdefault("viewGroups", list(defaults.view_groups))
+    filled = {
+        key: resolve_env(resolve_name(value), name) for key, value in filled.items()
+    }
     if name != NOTIFICATION_TARGET:
         rejected = [key for key in NOTIFICATION_KEYS if key in filled]
         if rejected:
@@ -255,7 +263,8 @@ class Bundle(StrictModel):
     """
 
     tags: dict[TagKey, TagValue] = Field(
-        default_factory=lambda: dict(DEFAULTS.bundle.tags), max_length=MAX_JOB_TAGS
+        default_factory=lambda: resolve_name(dict(DEFAULTS.bundle.tags)),
+        max_length=MAX_JOB_TAGS,
     )
     targets: dict[TargetName, Target]
 
@@ -306,9 +315,10 @@ def default_or_required(value: str) -> Any:  # noqa: ANN401 - pydantic types Fie
         value: The default, or an empty string for none.
 
     Returns:
-        A field with the default, or a required field if the value is empty.
+        A field with the default, with `{name}` replaced, or a required field if
+        the value is empty.
     """
-    return Field(default=value) if value else Field()
+    return Field(default_factory=lambda: resolve_name(value)) if value else Field()
 
 
 class BronzeLayer(StrictModel):
@@ -355,7 +365,7 @@ class GoldLayer(StrictModel):
     Attributes:
         upsert_latest_key: Silver column that orders records for the same primary
             key. The record with the highest value is kept. Defaults to
-            `job.upsert_latest_key` in `defaults.toml`.
+            `job.gold.upsert_latest_key` in `defaults.toml`.
         checkpoint_path: S3 URL of the streaming checkpoint. May contain `{env}`.
             Defaults to `job.gold.checkpoint_path` in `defaults.toml`, if set.
         target_table: Three-part target table name. May contain `{env}`.
@@ -365,7 +375,7 @@ class GoldLayer(StrictModel):
             `defaults.toml`. Not allowed in batch mode.
     """
 
-    upsert_latest_key: ColumnName = DEFAULTS.job.upsert_latest_key
+    upsert_latest_key: ColumnName = DEFAULTS.job.gold.upsert_latest_key
     checkpoint_path: S3Path = default_or_required(DEFAULTS.job.gold.checkpoint_path)
     target_table: TableName = default_or_required(DEFAULTS.job.gold.target_table)
     trigger_interval: str | None = None
@@ -533,6 +543,35 @@ class PipelineConfig(StrictModel):
     bundle: Bundle = Field(default_factory=Bundle)
     job: Job
     table_schema: TableSchema | None = Field(default=None, alias="schema")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def resolve_pipeline_name(
+        cls, data: object, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
+        """Replaces `{name}` and `{table}` in the YAML and its defaults.
+
+        `{name}` becomes `metadata.name`, and `{table}` the same name with
+        hyphens replaced by underscores. Both are replaced in every string of the
+        YAML, and in every default from `defaults.toml` applied while the YAML is
+        validated.
+
+        Args:
+            data: Raw input for the model.
+            handler: Validates the input.
+
+        Returns:
+            The validated model.
+        """
+        metadata = data.get("metadata") if isinstance(data, dict) else None
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        if not isinstance(name, str) or not PIPELINE_NAME_PATTERN.fullmatch(name):
+            return handler(data)
+        token = PIPELINE_NAME.set(name)
+        try:
+            return handler(resolve_name(data))
+        finally:
+            PIPELINE_NAME.reset(token)
 
     @model_validator(mode="after")
     def check_layers(self) -> Self:

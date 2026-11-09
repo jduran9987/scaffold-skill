@@ -18,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from sp_dynamo_firehose_s3.v1.fields import (
     MAX_JOB_TAGS,
     TARGET_NAMES,
-    TARGET_PLACEHOLDER,
     YAML_RESERVED_WORDS,
     AwsRegion,
     ColumnName,
@@ -38,6 +37,7 @@ from sp_dynamo_firehose_s3.v1.fields import (
     WebhookIds,
     WorkspaceHost,
     check_group_levels,
+    resolve_env,
 )
 
 DEFAULTS_ENV_VAR = "SP_DYNAMO_FIREHOSE_S3_V1_DEFAULTS"
@@ -115,7 +115,7 @@ class SharedTargetDefaults(DefaultsModel):
     """Defaults shared by every target.
 
     Attributes:
-        service_principal: Run-as service principal. `{target}` is replaced by the
+        service_principal: Run-as service principal. `{env}` is replaced by the
             target's name.
     """
 
@@ -191,12 +191,15 @@ class BundleDefaults(DefaultsModel):
             The validated model.
 
         Raises:
-            ValueError: If a target has no `[bundle.targets.<name>]` table.
+            ValueError: If a target has no `[bundle.targets.<name>]` table, or a
+                target's value contains a placeholder other than `{env}`.
         """
         missing = [name for name in TARGET_NAMES if name not in self.targets]
         if missing:
             tables = ", ".join(f"[bundle.targets.{name}]" for name in missing)
             raise ValueError(f"missing {tables} with host and compute_policy")
+        for name in TARGET_NAMES:
+            self.for_target(name)
         return self
 
     @model_validator(mode="after")
@@ -224,19 +227,16 @@ class BundleDefaults(DefaultsModel):
 
         Returns:
             The target's workspace settings with the shared defaults for every
-            setting it does not override, and `{target}` in the service principal
-            and group names replaced by the name.
+            setting it does not override, and `{env}` in every value replaced by
+            the name.
+
+        Raises:
+            ValueError: If a value contains a placeholder other than `{env}`.
         """
         overrides = self.targets[name]  # type: ignore[index]
         values = self.target.model_dump() | overrides.model_dump(exclude_none=True)
-        values["service_principal"] = values["service_principal"].replace(
-            TARGET_PLACEHOLDER, name
-        )
-        for key in ("manage_groups", "run_groups", "view_groups"):
-            values[key] = [
-                group.replace(TARGET_PLACEHOLDER, name) for group in values[key]
-            ]
-        return TargetDefaults.model_validate(values)
+        resolved = {key: resolve_env(value, name) for key, value in values.items()}
+        return TargetDefaults.model_validate(resolved)
 
 
 class LayerDefaults(DefaultsModel):
@@ -251,13 +251,22 @@ class LayerDefaults(DefaultsModel):
     target_table: TableName | Literal[""]
 
 
+class GoldDefaults(LayerDefaults):
+    """Defaults for the gold layer.
+
+    Attributes:
+        upsert_latest_key: Silver column gold uses to keep the latest record.
+    """
+
+    upsert_latest_key: ColumnName
+
+
 class JobDefaults(DefaultsModel):
     """Defaults for the `job` section.
 
     Attributes:
         execution_mode: Whether jobs run continuously or as a batch.
         trigger_interval: Processing-time interval in continuous mode.
-        upsert_latest_key: Silver column gold uses to keep the latest record.
         bronze: Defaults for the bronze layer.
         silver: Defaults for the silver layer.
         gold: Defaults for the gold layer.
@@ -265,10 +274,9 @@ class JobDefaults(DefaultsModel):
 
     execution_mode: Literal["continuous", "batch"]
     trigger_interval: NonEmptyString
-    upsert_latest_key: ColumnName
     bronze: LayerDefaults
     silver: LayerDefaults
-    gold: LayerDefaults
+    gold: GoldDefaults
 
 
 class StreamDefaults(DefaultsModel):

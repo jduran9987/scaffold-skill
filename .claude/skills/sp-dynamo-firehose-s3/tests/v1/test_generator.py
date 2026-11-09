@@ -8,7 +8,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from sp_dynamo_firehose_s3.v1 import ProjectInitError, generate, generator
+from sp_dynamo_firehose_s3.v1 import ProjectInitError, config, generate, generator
+from sp_dynamo_firehose_s3.v1.defaults import DEFAULTS
 
 FIXTURES = Path(__file__).parent / "fixtures"
 JOB_FILES = ["bronze.py", "gold.py", "silver.py"]
@@ -169,8 +170,8 @@ def test_tag_keys_are_unquoted(raw_config, tmp_path):
     assert job["tags"] == {"SOURCE": "dynamo", "cost:center": "a b/c"}
 
 
-def test_target_placeholder_in_tags_becomes_the_bundle_target(raw_config, tmp_path):
-    raw_config["bundle"]["tags"] = {"environment": "{target}", "app": "orders-{target}"}
+def test_env_placeholder_in_tags_becomes_the_bundle_target(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"environment": "{env}", "app": "orders-{env}"}
 
     source = generated_sources(raw_config, tmp_path)[JOB_RESOURCE]
 
@@ -178,8 +179,8 @@ def test_target_placeholder_in_tags_becomes_the_bundle_target(raw_config, tmp_pa
     assert '        app: "orders-${bundle.target}"\n' in source
 
 
-def test_tag_value_with_target_fits_for_every_target(raw_config, tmp_path):
-    raw_config["bundle"]["tags"] = {"team": "v" * 251 + "{target}"}
+def test_tag_value_with_env_fits_for_every_target(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"team": "v" * 251 + "{env}"}
 
     job = load_job(raw_config, tmp_path)
 
@@ -199,8 +200,8 @@ def test_tag_value_with_target_fits_for_every_target(raw_config, tmp_path):
         {"team": "a#b"},
         {"k" * 128: "x"},
         {"team": "v" * 256},
-        {"team": "v" * 252 + "{target}"},
-        {"env": "{env}"},
+        {"team": "v" * 252 + "{env}"},
+        {"env": "{target}"},
         {"env": "{Target}"},
         {"env": "${bundle.target}"},
         {f"tag{i}": "x" for i in range(26)},
@@ -339,6 +340,110 @@ def test_permissions_default_per_target(raw_config, tmp_path):
         {"group_name": "admins", "level": "CAN_MANAGE"},
         {"group_name": "data_analysts", "level": "CAN_RUN"},
     ]
+
+
+def test_env_placeholder_in_target_values_becomes_the_target(raw_config, tmp_path):
+    for entry in raw_config["bundle"]["targets"]:
+        [(name, settings)] = entry.items()
+        settings.update(servicePrincipal="sp_{env}_etl", viewGroups=["{env}_readers"])
+
+    bundle = yaml.safe_load(generated_sources(raw_config, tmp_path)["databricks.yml"])
+
+    for name, target in bundle["targets"].items():
+        assert target["variables"]["run-as"] == {
+            "lookup": {"service_principal": f"sp_{name}_etl"}
+        }
+        assert {"group_name": f"{name}_readers", "level": "CAN_VIEW"} in target[
+            "permissions"
+        ]
+
+
+@pytest.mark.parametrize("key", ["servicePrincipal", "manageGroups", "host"])
+def test_other_placeholders_in_target_values_are_rejected(raw_config, tmp_path, key):
+    value = "sp_{target}" if key == "servicePrincipal" else ["{target}_admins"]
+    if key == "host":
+        value = "https://{target}.cloud.databricks.com"
+    dev_target(raw_config)[key] = value
+
+    with pytest.raises(
+        ValidationError, match=r"only the \{env\}, \{name\}, \{table\} placeholders"
+    ):
+        generate(raw_config, tmp_path)
+
+
+def test_name_placeholder_in_the_yaml_becomes_the_pipeline_name(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"project": "{name}"}
+    dev_target(raw_config)["viewGroups"] = ["{name}_{env}_readers"]
+    raw_config["job"]["bronze"]["targetTable"] = "{env}.bronze.{name}"
+
+    sources = generated_sources(raw_config, tmp_path)
+    bundle = yaml.safe_load(sources["databricks.yml"])
+    job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
+
+    assert job["tags"] == {"project": "orders"}
+    assert {"group_name": "orders_dev_readers", "level": "CAN_VIEW"} in bundle[
+        "targets"
+    ]["dev"]["permissions"]
+    assert (
+        "CREATE TABLE IF NOT EXISTS `qa`.`bronze`.`orders`"
+        in sources["ddl/qa/bronze.sql"]
+    )
+    for path, source in sources.items():
+        if path.endswith((".yml", ".sql", ".md")):
+            assert "{name}" not in source, path
+
+
+def test_name_placeholder_in_defaults_becomes_the_pipeline_name(
+    raw_config, tmp_path, monkeypatch
+):
+    bundle_defaults = DEFAULTS.bundle.model_copy(
+        update={
+            "tags": {"project": "{name}"},
+            "target": DEFAULTS.bundle.target.model_copy(
+                update={"service_principal": "sp_{name}_{env}"}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        config, "DEFAULTS", DEFAULTS.model_copy(update={"bundle": bundle_defaults})
+    )
+    del raw_config["bundle"]["tags"]
+    del dev_target(raw_config)["servicePrincipal"]
+
+    sources = generated_sources(raw_config, tmp_path)
+    bundle = yaml.safe_load(sources["databricks.yml"])
+    job = yaml.safe_load(sources[JOB_RESOURCE])["resources"]["jobs"]["orders"]
+
+    assert job["tags"] == {"project": "orders"}
+    assert bundle["targets"]["dev"]["variables"]["run-as"] == {
+        "lookup": {"service_principal": "sp_orders_dev"}
+    }
+
+
+def test_table_placeholder_replaces_hyphens(raw_config, tmp_path):
+    raw_config["metadata"]["name"] = "bo-accounts"
+    raw_config["bundle"]["tags"] = {"project": "{name}"}
+    raw_config["job"]["gold"]["targetTable"] = "{env}.gold.{table}"
+    raw_config["job"]["gold"]["checkpointPath"] = "s3://{env}-lake/{name}/gold/"
+
+    sources = generated_sources(raw_config, tmp_path)
+    job = yaml.safe_load(sources["resource/bo-accounts.job.yml"])
+
+    assert job["resources"]["jobs"]["bo_accounts"]["tags"] == {"project": "bo-accounts"}
+    assert (
+        "CREATE TABLE IF NOT EXISTS `prod`.`gold`.`bo_accounts`"
+        in sources["ddl/prod/gold.sql"]
+    )
+    gold = sources["src/bo_accounts/gold.py"]
+    assert '"{env}.gold.bo_accounts"' in gold
+    assert '"s3://{env}-lake/bo-accounts/gold/"' in gold
+
+
+def test_name_placeholder_tag_length_uses_the_real_name(raw_config, tmp_path):
+    raw_config["bundle"]["tags"] = {"team": "v" * 250 + "{name}"}
+
+    with pytest.raises(ValidationError, match="at most 255 characters"):
+        generate(raw_config, tmp_path)
 
 
 def test_service_principal_is_the_only_grant_without_groups(raw_config, tmp_path):

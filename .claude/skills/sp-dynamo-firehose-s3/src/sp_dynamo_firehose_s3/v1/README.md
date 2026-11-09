@@ -295,11 +295,21 @@ General rules:
 - Types are strict: values are not converted. Quote strings YAML would read as
   numbers or booleans, such as `pythonVersion: "3.12"` and `dynamoType: "NULL"`.
 - A key set to `null` is the same as leaving it out.
-- `{env}` in paths and table names is replaced by the target name (`dev`, `qa`,
-  `uat`, `prod`) when the job runs and in each target's DDL. It is the only
-  placeholder there: any other `{...}`, such as `{dev}`, is rejected.
-- `{target}` in `bundle.tags` values is replaced by the target name when the
-  bundle deploys. It is the only placeholder in tags.
+- Three placeholders are supported. Any other `{...}`, such as `{dev}` or
+  `{target}`, is rejected.
+  - `{env}` becomes the target name (`dev`, `qa`, `uat`, `prod`).
+  - `{name}` becomes `metadata.name`, such as `bo-accounts`.
+  - `{table}` becomes `metadata.name` with hyphens replaced by underscores,
+    such as `bo_accounts`. Use it in table names, which cannot contain hyphens
+    unquoted.
+  - `{name}` and `{table}` are replaced in every string value before the YAML
+    is validated, and in every default applied to it.
+
+| Where `{env}` is used | When it is replaced |
+|---|---|
+| Paths and table names (`job.<layer>`) | When the job runs, and in each target's DDL. |
+| Every `bundle.targets` value, such as `servicePrincipal: "sp_{env}"` | When the YAML is validated, for each target. |
+| `bundle.tags` values | When the bundle deploys (rendered as `${bundle.target}`). |
 
 Column key: **Req** = required. **Default** = "defaults.toml" when a default exists
 there.
@@ -329,7 +339,7 @@ The whole section is optional.
 
 | Field | Type | Req | Default | Description |
 |---|---|---|---|---|
-| `tags` | map of string to string, at most 25 | No | defaults.toml | Job tags. Keys start with a letter and are not YAML words like `true` or `no`. `{target}` in a value becomes the target's name at deploy, such as `environment: "{target}"`. |
+| `tags` | map of string to string, at most 25 | No | defaults.toml | Job tags. Keys start with a letter and are not YAML words like `true` or `no`. `{env}` in a value becomes the target's name at deploy, such as `environment: "{env}"`. |
 | `targets` | list of single-key maps | No | defaults.toml | Per-target settings. See below. |
 
 `bundle.targets`:
@@ -577,17 +587,27 @@ Target defaults:
 | `[bundle.target]` | Settings shared by every target: `service_principal`. |
 | `[bundle.targets.<target>]` | Required for each of `dev`, `qa`, `uat`, `prod`: `host`, `compute_policy`, `service_principal_permissions` (`"can_manage"` or `"can_run"`), `manage_groups`, `run_groups`, `view_groups` (`[]` for none). Can also set `service_principal` to override the shared one. |
 
-`{target}` in `defaults.toml` becomes each target's name:
+`{env}`, `{name}`, and `{table}` work in `defaults.toml` as in the YAML.
+`{name}` and `{table}` stay as written in the YAML `generate-yaml` writes, and
+`scaffold` replaces them from `metadata.name`.
+
+| Example | Pipeline `bo-accounts`, target `qa`, gets |
+|---|---|
+| `service_principal = "sp_{table}_{env}"` | `sp_bo_accounts_qa` |
+| `project = "{name}"` in `[bundle.tags]` | `bo-accounts` |
+| `checkpoint_path = "s3://{env}-lake/{name}/bronze/"` | `s3://qa-lake/bo-accounts/bronze/` |
+| `target_table = "{env}.bronze.{table}"` | `qa.bronze.bo_accounts` |
+
+`{env}` details:
 
 | Where | Example | `qa` gets |
 |---|---|---|
-| `service_principal` | `"sp_ingestion_{target}"` | `sp_ingestion_qa` |
-| `manage_groups`, `run_groups`, `view_groups` | `["{target}_readers"]` | `qa_readers` |
-| `[bundle.tags]` values | `environment = "{target}"` | `qa`, at deploy |
+| Any `[bundle.target]` or `[bundle.targets.<target>]` value | `service_principal = "sp_ingestion_{env}"` | `sp_ingestion_qa`, written into the YAML |
+| `[bundle.tags]` values | `environment = "{env}"` | `qa`, at deploy |
+| `[job.<layer>]` paths and tables | `target_table = "{env}.gold.orders"` | `qa.gold.orders`, at run time |
 
-- Tag values keep `{target}` in the YAML `generate-yaml` writes. `scaffold`
-  renders it as `${bundle.target}` in the job file, filled in at deploy.
-- Paths and table names use `{env}` instead.
+- Tag, path and table values keep `{env}` in the YAML `generate-yaml` writes.
+- Any other placeholder stops the skill with `Invalid defaults file`.
 
 ```toml
 [bundle.targets.prod]
