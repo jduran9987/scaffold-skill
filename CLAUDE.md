@@ -1,92 +1,127 @@
 # scaffold-skill
 
 Claude Code skills that generate Databricks pipeline projects. The one skill so
-far, `sp-dynamo-firehose-s3`, handles DynamoDB → Kinesis → Firehose → S3 sources:
+far, `sp-dynamo-firehose-s3`, handles DynamoDB → Kinesis → Firehose → S3 sources.
+The user invokes it and the agent runs these steps in order, one at a time:
 
-- `create-stream <table>`: creates the AWS streaming resources for a table.
-- `generate-yaml <table>`: writes a pipeline YAML with a schema inferred from it.
-- `scaffold <yaml>`: generates a Declarative Automation Bundle project with bronze,
-  silver, and gold jobs, DDL, and a README.
+| Step | Command | What it does |
+|---|---|---|
+| Table name | none | Asks the DynamoDB table name |
+| 1 | `check-project <table> <project dir>` | Reports whether the table's project exists; if so, the agent asks whether to overwrite it, and No stops the run |
+| Trigger | none | Asks `batch` or `continuous`, and a cron schedule if batch |
+| 2 | `create-stream <table>` | Creates the Kinesis stream, the table's streaming to it, and the Firehose stream. Only `TABLE_NOT_FOUND` stops the run. |
+| 3 | `prepare-inputs <session> <table>` | Scans and flattens the table into columns for the agent and for scaffold. Anything but `COLUMNS_FOUND` stops the run. |
+| Types | none | The agent picks a Spark type per column from each column's allowed types |
+| 4 | `scaffold <session> <table> <project dir> < answers` | Generates a Declarative Automation Bundle project with bronze, silver, and gold jobs, DDL, and a README |
 
-The full reference (actions, YAML fields, architecture, defaults) is
-`.claude/skills/sp-dynamo-firehose-s3/src/sp_dynamo_firehose_s3/v1/README.md`.
-Read it before changing behavior.
+`SKILL.md` is the agent's procedure. The skill's `README.md` is the reference:
+commands, result codes, flattening rules, and the generated project. Read it
+before changing behavior. `inputs.toml` holds every value the user is not asked
+for, with comments describing each.
 
 ## Philosophy: Claude routes, code generates
 
-Output must be as close to deterministic as possible. Claude is a router that
-picks an action and runs coded logic, not a code generator.
+Output must be as close to deterministic as possible. Claude asks fixed
+questions, runs coded commands, and relays their reports. It is not a code
+generator.
 
-- IMPORTANT: Never write or edit generated pipeline code, DDL, or pipeline YAML by
+- IMPORTANT: Never write or edit generated pipeline code, DDL, or bundle files by
   hand, and never improvise AWS commands. Change the templates or Python instead.
-- The same YAML and defaults always produce byte-identical files: Jinja
-  templates with `StrictUndefined`, no timestamps, no ordering that varies.
+- The same inputs and answers always produce byte-identical files: Jinja templates
+  with `StrictUndefined`, no timestamps, no ordering that varies.
 - Every outcome has a canned report ending in a fixed block:
   `Result: <CODE>` / what happened / `Next step:`. A new failure mode gets a new
   result code and fixed text, never free-form output.
-- `SKILL.md` tells Claude to run the command once and show the report exactly as
-  printed, adding nothing. Keep `SKILL.md` short and procedural; logic belongs
-  in code.
-- Every AWS call is coded ahead of time in `v1/aws.py` and `v1/streaming.py`, with
-  its errors classified into result codes.
+- `SKILL.md` gives every question word for word, every command, and every status
+  message, and tells Claude to show each report exactly as printed, adding
+  nothing. Keep it short and procedural; logic belongs in code.
+- The agent's only judgment call is each column's Spark type, made from fixed
+  rules in `SKILL.md` and checked by scaffold against `allowed_types`.
 
 ## Layout
 
 ```
 .claude/skills/sp-dynamo-firehose-s3/
-  SKILL.md                      # Claude's procedure: run once, relay the report
-  pyproject.toml                # entry point `generate` = router:main
+  SKILL.md                       # the agent's procedure
+  pyproject.toml                 # entry points create-stream, prepare-inputs, scaffold
   src/sp_dynamo_firehose_s3/
-    router.py                   # only code shared across versions
-    v1/                         # everything for version v1
-      actions/                  # one module per action
-      config.py, fields.py      # pydantic models for the pipeline YAML
-      defaults.py, defaults.toml
-      generator.py, templates/  # Jinja rendering of the generated project
-      aws.py, streaming.py      # AWS CLI wrapper and create-stream flow
-      report.py                 # result block formatting
-      README.md                 # v1 reference
-  tests/v1/fixtures/            # test defaults, fake AWS CLI, expected outputs
-scripts/                        # data generator for the `scaffoldskill` test table
-dabs/                           # default scaffold output (`dabs/<metadata.name>/`)
+    inputs.toml                  # every value the user is not asked for
+    aws.py                       # AWS CLI wrapper; errors sorted into fixed kinds
+    result.py                    # report layout shared by every action
+    check_project/               # config.py, report.py, main.py
+    create_stream/               # config.py, steps.py, report.py, main.py
+    prepare_inputs/              # config.py, columns.py, report.py, main.py
+    scaffold/                    # config.py, render.py, report.py, main.py, templates/
+  tests/                         # one file per action, plus one per action's config
+    test_inputs.py               # the only test of the shipped inputs.toml
+    fixtures/inputs.toml         # the tests' copy of inputs.toml
+    fixtures/scaffold/           # byte-exact expected project files
+archive/                         # the previous version, for reference only; never edit
+scripts/                         # data generator for the `scaffoldskill` test table
+bundles/                         # default scaffold output (`bundles/<table_name>/`)
 ```
 
-## Versioning
+## Actions are isolated
 
-- A pipeline YAML declares `version: v1`. `router.py` reads it and passes the
-  arguments, unchanged, to that version's `main`. Actions without a YAML
-  (`generate-yaml`, `create-stream`) go to the latest version.
-- Each version is fully isolated: its own actions, argument parsing, models,
-  defaults, templates, README, and tests. YOU MUST NOT share code between
-  versions; only the thin router lives outside `vN/`. This way an existing
-  YAML always generates the same output, whatever later versions change.
-- v1 is still in development, so changes go into v1 directly (after asking
-  about breaking ones).
+- Each action has its own config model, report codes, and logic. Actions never
+  import from each other. Only `aws.py` and `result.py` are shared, and neither
+  describes any action's inputs.
+- Each command is its own action, with its own folder, even a small one such as
+  check-project.
+- Copying small pieces between actions (reading `inputs.toml`,
+  `fill_placeholders`, `AwsConfig`, the session folder path, `to_snake_case`) is
+  intended. Do not factor them into a shared module. Where two copies must agree,
+  such as check-project's and scaffold's `to_snake_case`, a test compares them.
+- Each action validates all of its inputs in one pydantic model, at one time, and
+  reports every problem in one `CONFIG_INVALID` report. Do not add a separate,
+  earlier check for a single value.
+- create-stream's report is always shown, but only `TABLE_NOT_FOUND` ends the
+  run; any other result continues to prepare-inputs. A prepare-inputs or
+  scaffold failure ends the run. There are no retries for bad answers; the user
+  reruns the skill. The one retry is create-stream's `TIMEOUT`, run once more.
+
+## Handoff between actions
+
+- prepare-inputs writes `columns.json` (name, path, DynamoDB type, key) to
+  `<system temp>/sp-dynamo-firehose-s3/<session id>/`, where the session ID is
+  `${CLAUDE_SESSION_ID}`. Users never see this folder.
+- prepare-inputs prints `## Columns (for the agent)` (one JSON object per column,
+  with examples and allowed types) before `## Report`. The agent shows only the
+  report.
+- The agent passes its types and the user's answers to scaffold as JSON on
+  standard input. scaffold reads `columns.json`, checks everything, writes the
+  project, and deletes the session folder whatever the result.
+- The user interacts only through the agent's prompts. Their answers reach the
+  commands in the answers JSON, never as command flags.
 
 ## Config rules
 
-- Pipeline YAML: pydantic strict mode, camelCase keys, unknown keys rejected,
-  no type coercion, and `null` means the key was left out.
-- `defaults.toml` (snake_case) is the single source of defaults. It is
-  validated with the same types as the YAML when the skill starts, and
-  `generate-yaml` writes its values into new YAMLs.
-- Placeholders: `{env}` (target name), `{name}` (`metadata.name`), `{table}`
-  (`metadata.name` with `-` → `_`). Any other `{...}` is rejected.
-- Targets are always `dev`, `qa`, `uat`, `prod`. Workspace settings are per
-  target in `[bundle.targets.<target>]`. Failure notifications are prod-only and
-  opt-in.
-- Hyphens are allowed in `metadata.name`. Use `{table}` for table names.
+- Every model is pydantic strict: unknown keys rejected, no type coercion,
+  read-only. Each action's top-level model ignores other actions' sections.
+- `inputs.toml` is read, never written. Placeholders are filled in memory:
+  - `{dynamo_table_name}`: the table name as typed. Filled by every action.
+  - `{table_name}` (snake_case) and `{firehose_table_name}` (dots → dashes):
+    filled by scaffold only.
+  - `{env}`: left as is; the generated project replaces it per target.
+  - `!{...}`: Firehose syntax, passed to AWS unchanged.
+- Targets are always `dev`, `qa`, `uat`, `prod`. Failure notifications are sent
+  by prod only.
+- Generated projects are uv projects (`uv_build` backend) rendered from
+  templates; `uv init` is not run.
 
 ## AWS
 
-- Every command goes through `aws.run_aws`, with `--profile` and `--region` from
-  `defaults.toml`. Credentials come from local AWS profiles.
+- Every command goes through `aws.run_aws`, with the profile and region from
+  `inputs.toml`. Credentials come from local AWS profiles.
 - IMPORTANT: Never run `aws sso login`. Credential errors return
   `AWS_CREDENTIALS`, whose next step tells the user to run it.
-- `create-stream` checks every resource first and stops on any conflict before
-  creating anything. It then creates only what is missing, waits, and confirms.
-  It never modifies existing resources. The total wait is at most 540 s, to stay
-  under Claude Code's 10-minute Bash limit.
+- Never run an action against real AWS without the user's permission; the user
+  runs real tests.
+- create-stream checks every resource first and stops on any conflict, such as
+  the table already streaming elsewhere, before creating anything. It then
+  creates only what is missing, waits, and confirms. It never modifies existing
+  resources. The total wait is at most 540 s, to stay under Claude Code's
+  10-minute Bash limit.
 
 ## Commands
 
@@ -95,39 +130,42 @@ Run from `.claude/skills/sp-dynamo-firehose-s3/`:
 ```bash
 uv run pytest -q
 uv run ruff check . && uv run ruff format --check .
-uv run generate <action> <args>
+UPDATE_EXPECTED=1 uv run pytest tests/test_scaffold.py
 ```
 
-- Tests use `tests/v1/fixtures/defaults.toml` (set via
-  `SP_DYNAMO_FIREHOSE_S3_V1_DEFAULTS` in `conftest.py` before import), never the
-  shipped file. Keep its keys in sync with `v1/defaults.toml` (a test checks only
-  the top-level sections).
-- AWS is faked: `conftest.py` patches `aws.subprocess`, and
-  `tests/v1/fixtures/bin/aws` is a fake CLI for subprocess tests.
-- `tests/v1/fixtures/expected/` holds byte-exact expected outputs. When output
-  changes on purpose, regenerate them and review the diff.
+- Tests read `tests/fixtures/inputs.toml`, never the shipped `inputs.toml`,
+  whose values differ between projects. Only `tests/test_inputs.py` reads the
+  shipped file, and only checks that every action accepts it (types and limits)
+  and that its sections and keys match the copy. Keep the two files' keys in
+  sync.
+- AWS and the clock are faked in `tests/conftest.py`. Tests point files and
+  folders (`INPUTS_PATH`, `SESSIONS_DIR`) at `tmp_path` with `monkeypatch`.
+- `tests/fixtures/scaffold/` holds byte-exact expected output. When output
+  changes on purpose, regenerate with `UPDATE_EXPECTED=1` and review the diff.
 
 ## Code style
 
 - Python 3.12+, type annotations everywhere, Google-style docstrings, 88-char
   lines, ruff rules from `pyproject.toml`.
-- uv for everything; `uv_build` is the build backend for the skill and for
-  generated projects.
+- uv for everything.
+- No test-only parameters, hooks, or logic in production code. Tests use
+  `monkeypatch` for files, subprocesses, and time.
+- Keep code simple and organized above all; other people will maintain it.
 
 ## Working agreements
 
-- Ask before breaking changes (YAML or defaults layout, build backend, removing
-  working commands), and say what breaks.
+- Go slowly: agree on the design before writing much code.
+- Ask before breaking changes, and say what breaks.
 - Push back on anti-patterns instead of implementing them.
-- Each behavior change also updates `v1/README.md`, `SKILL.md` if affected, the
-  test copy of the defaults, and the expected fixtures.
-- Docs are for technical readers: dry, concise, tables and bullets, examples. They
-  describe only the current state, with no history, rationale, or plans.
+- Each behavior change also updates the skill's `README.md`, `SKILL.md` if
+  affected, the comments in `inputs.toml`, the tests, and the expected fixtures.
+- Docs and comments are for technical readers: dry, concise, tables and bullets,
+  examples. They describe only the current state, with no history, rationale,
+  or plans.
 - Databricks testing is deferred until the project is done. Local Spark + Delta
   checks are fine.
 
 ## Open items
 
-- An invalid `defaults.toml` prints a Python error instead of a result block.
-- Not yet requested: primary key constraints and `CLUSTER BY` on gold tables.
+- End-to-end run of the skill against real AWS.
 - End-to-end test in Databricks.

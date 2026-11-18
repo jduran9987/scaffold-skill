@@ -1,0 +1,89 @@
+{% set bundle = config.bundle %}
+{% set answers = config.answers %}
+{% set job_alerts = bundle.on_job_failure_emails or bundle.on_job_failure_webhook_notification_ids %}
+{% set task_alerts = bundle.on_task_failure_emails or bundle.on_task_failure_webhook_notification_ids %}
+resources:
+  jobs:
+    {{ package }}:
+      name: "[${bundle.target}] {{ package }}"
+      description: >-
+        Loads DynamoDB table {{ config.dynamo_table_name }} from the files Firehose
+        writes to S3 into Delta tables. The bronze task appends raw source records
+        to a Delta table as they arrive, along with ingestion and source file
+        metadata. The silver task flattens bronze records into typed columns, one
+        row per change event. The gold task merges each change into a Delta table
+        that keeps the latest version of every primary key.
+      max_concurrent_runs: 1
+{% if answers.execution_mode == "continuous" %}
+      continuous:
+        pause_status: PAUSED
+        task_retry_mode: ON_FAILURE
+{% else %}
+      schedule:
+        quartz_cron_expression: {{ answers.batch_schedule | yaml_string }}
+        timezone_id: {{ config.job.timezone | yaml_string }}
+        pause_status: PAUSED
+{% endif %}
+      queue:
+        enabled: true
+{% if bundle.tags %}
+      tags:
+{% for key, value in bundle.tags.items() %}
+        {{ key }}: {{ value | bundle_target | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if bundle.on_job_failure_emails %}
+      email_notifications:
+        on_failure: ${var.job_failure_emails}
+{% endif %}
+{% if bundle.on_job_failure_webhook_notification_ids %}
+      webhook_notifications:
+        on_failure: ${var.job_failure_webhooks}
+{% endif %}
+{% if job_alerts %}
+      notification_settings:
+        no_alert_for_skipped_runs: false
+{% endif %}
+      timeout_seconds: 0
+
+      job_clusters:
+        - job_cluster_key: {{ package }}_cluster
+          new_cluster:
+            policy_id: ${var.compute_policy_id}
+            apply_policy_default_values: true
+            num_workers: ${var.num_workers}
+            custom_tags:
+              environment: ${var.environment}
+
+      tasks:
+{% for task in tasks %}
+        - task_key: {{ task }}
+{% if answers.execution_mode == "batch" and not loop.first %}
+          depends_on:
+            - task_key: {{ loop.previtem }}
+{% endif %}
+          job_cluster_key: {{ package }}_cluster
+          python_wheel_task:
+            package_name: {{ package }}
+            entry_point: {{ task }}
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+{% if bundle.on_task_failure_emails %}
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+{% endif %}
+{% if bundle.on_task_failure_webhook_notification_ids %}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+{% endif %}
+{% if task_alerts %}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+{% endif %}
+          timeout_seconds: 0
+{% endfor %}

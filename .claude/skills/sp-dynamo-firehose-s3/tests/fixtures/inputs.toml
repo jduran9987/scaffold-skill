@@ -1,0 +1,192 @@
+# The tests' copy of src/sp_dynamo_firehose_s3/inputs.toml, with fixed values.
+# Keep its sections and keys the same as the shipped file's; a test checks it.
+#
+# Inputs for every action that the user is not asked for. The user gives only
+# the DynamoDB table name; everything else comes from this file.
+#
+# Each action reads only its own sections:
+# - create-stream: [aws], [kinesis], [firehose], [wait]
+# - prepare-inputs: [aws], [schema_inference]
+# - scaffold: [schema_inference], [project], [bundle], [job]
+#
+# Placeholders:
+# - `{dynamo_table_name}`: the table name as the user gave it, such as
+#   bo.suspenseAccounts. Filled in every section.
+# - `{table_name}`: its snake_case form, such as bo_suspense_accounts. Filled in
+#   scaffold's sections only.
+# - `{firehose_table_name}`: the name Firehose gives the table's folder, with
+#   dots replaced by dashes, such as bo-suspenseAccounts. Filled in scaffold's
+#   sections only.
+# - `{env}`: the target's name, such as prod. Left as is in the config and
+#   replaced per target when the project is generated.
+# `!{...}` values are Firehose's own syntax and are passed to AWS unchanged.
+
+# AWS CLI profile and region every AWS command uses.
+[aws]
+profile = "dev-main"
+region = "us-east-1"
+
+# The Kinesis data stream the DynamoDB table streams to.
+[kinesis]
+name = "{dynamo_table_name}-stream"
+shard_count = 3
+
+# The Firehose stream that reads the Kinesis stream and writes to S3.
+[firehose]
+name = "{dynamo_table_name}-firehose"
+# Existing role Firehose uses to read the Kinesis stream and write to the bucket.
+role_arn = "arn:aws:iam::747289661046:role/service-role/KinesisFirehoseServiceRole-orders-us-east-1-1793505976910"
+# job.bronze.source_path must point at this bucket and the prefix's folder.
+bucket_arn = "arn:aws:s3:::dev-datalake-7472"
+# Where records land: a fixed folder, then one folder per table
+# (!{partitionKeyFromQuery:tableName}/), then one per hour. Must start with a
+# folder and then the table's folder, which bronze's source_path reads.
+prefix = "firehose-stream/!{partitionKeyFromQuery:tableName}/!{timestamp:yyyy/MM/dd/HH}/"
+error_output_prefix = "firehose-stream/failures/{dynamo_table_name}/!{firehose:error-output-type}/!{timestamp:yyyy/MM/dd/HH}/"
+# Must be GZIP: bronze reads only *.gz files.
+compression_format = "GZIP"
+# Firehose writes a file when either limit is reached. Dynamic partitioning needs
+# 64 to 128 MB and at least 60 seconds.
+buffer_size_mb = 128
+buffer_interval_seconds = 300
+# Reads each record's table name, with dots replaced by dashes, for the prefix's
+# partitionKeyFromQuery:tableName. Must be exactly this value: scaffold's
+# {firehose_table_name} replaces dots with dashes the same way.
+metadata_extraction_query = '{tableName:limit(1;.tableName | gsub("\\.", "-"; "-"))}'
+json_parsing_engine = "JQ-1.6"
+# How long Firehose retries delivery to a partition before writing to the error
+# prefix.
+partition_retry_seconds = 60
+# Appended after each record. Firehose reads the two characters \n as a newline.
+# Must be \n: bronze reads one JSON record per line.
+record_delimiter = '\n'
+
+# How create-stream waits for resources to become active.
+[wait]
+poll_interval_seconds = 10
+# Total wait for one run. At most 540, so a run reports a timeout before Claude
+# Code's 10-minute command limit stops it.
+timeout_seconds = 540
+
+# How prepare-inputs infers the table's columns.
+[schema_inference]
+# Items read from the start of a scan of the table.
+sample_size = 100
+
+# The Spark types a column of each DynamoDB type can be cast to. The agent picks
+# one per column; money values use decimal(22,2). Maps are flattened, so M has
+# no entry. A column that is NULL in every sampled item is read as S.
+[schema_inference.allowed_types]
+S = [
+    "string",
+    "boolean",
+    "int",
+    "bigint",
+    "double",
+    "decimal(22,2)",
+    "date",
+    "timestamp",
+]
+N = ["int", "bigint", "double", "decimal(22,2)", "string"]
+BOOL = ["boolean", "string"]
+B = ["string"]
+L = ["string"]
+SS = ["array<string>"]
+NS = ["array<string>"]
+BS = ["array<string>"]
+
+# The generated project.
+[project]
+# Directory generated projects are written under, in the Claude Code project.
+projects_dir = "bundles"
+python_version = "3.12"
+uv_build_version = ">=0.13.7,<0.14.0"
+
+# Failure notifications, sent by the prod target only. Use [] for none.
+[bundle]
+on_job_failure_webhook_notification_ids = ["XXXXXXXXX"]
+on_job_failure_emails = ["alerts@example.com"]
+on_task_failure_webhook_notification_ids = ["XXXXXXXXX"]
+on_task_failure_emails = ["alerts@example.com"]
+
+# Job tags. `{env}` in a value becomes the target's name.
+[bundle.tags]
+project = "{table_name}"
+SOURCE = "dynamo"
+
+# Defaults shared by every target.
+[bundle.target]
+service_principal = "sp_ingestion_{env}"
+
+# Each target's workspace settings, all required:
+# - host, compute_policy: the target's workspace and cluster policy.
+# - num_workers: workers on the job cluster; must be within the policy's range.
+# - service_principal_permissions: "can_manage", "can_run", or "can_view", the
+#   level the run-as service principal gets.
+# - manage_groups, run_groups, view_groups: groups with CAN_MANAGE, CAN_RUN, and
+#   CAN_VIEW. Use [] for none.
+# A target can also set service_principal to override the shared one.
+[bundle.targets.dev]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+num_workers = 1
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+[bundle.targets.qa]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+num_workers = 1
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+[bundle.targets.uat]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+num_workers = 1
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+[bundle.targets.prod]
+host = "https://dbc-f18f3dd9-412f.cloud.databricks.com"
+compute_policy = "XXXXXXXXX"
+num_workers = 1
+service_principal_permissions = "can_manage"
+manage_groups = ["data_engineers", "admins"]
+run_groups = ["data_analysts"]
+view_groups = []
+
+# The jobs' execution mode and batch schedule are the user's answers.
+[job]
+# Time zone of the batch schedule: an IANA name, such as UTC.
+timezone = "UTC"
+# How often continuous jobs process new data: a Spark trigger such as "1 minute"
+# or "30 seconds".
+trigger_interval = "1 minute"
+
+# Checkpoint paths and target tables. They may contain `{env}`. Each layer needs
+# its own checkpoint path and target table.
+[job.bronze]
+# Where the bronze job reads the files Firehose writes. Must be the bucket in
+# firehose.bucket_arn (with {env} for the target), then the folder that starts
+# firehose.prefix, then {firehose_table_name}/. Nothing checks that they match.
+source_path = "s3://{env}-datalake-7472/firehose-stream/{firehose_table_name}/"
+checkpoint_path = "s3://{env}-datalake-7472/checkpoints/{table_name}/bronze/"
+target_table = "{env}.bronze.{table_name}"
+
+[job.silver]
+checkpoint_path = "s3://{env}-datalake-7472/checkpoints/{table_name}/silver/"
+target_table = "{env}.silver.{table_name}"
+
+[job.gold]
+checkpoint_path = "s3://{env}-datalake-7472/checkpoints/{table_name}/gold/"
+target_table = "{env}.gold.{table_name}"
+# Silver column that orders changes to the same primary key; the highest wins.
+# Must be a table column or one the silver job adds, such as _event_timestamp.
+upsert_latest_key = "_event_timestamp"

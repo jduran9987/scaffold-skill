@@ -1,0 +1,16 @@
+[project]
+name = {{ package | toml_string }}
+version = "0.1.0"
+description = {{ description | toml_string }}
+readme = "README.md"
+requires-python = {{ (">=" ~ config.project.python_version) | toml_string }}
+dependencies = []
+
+[project.scripts]
+{% for task in tasks %}
+{{ task }} = {{ (package ~ "." ~ task ~ ":main") | toml_string }}
+{% endfor %}
+
+[build-system]
+requires = [{{ ("uv_build" ~ config.project.uv_build_version) | toml_string }}]
+build-backend = "uv_build"

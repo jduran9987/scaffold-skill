@@ -1,126 +1,152 @@
 ---
 name: sp-dynamo-firehose-s3
-description: Runs actions for Databricks pipelines whose data flows from DynamoDB through Firehose to S3, such as creating the Kinesis and Firehose streams for a table, writing a pipeline YAML to fill in, and scaffolding a pipeline project from it. Use when working on a pipeline for this source.
-argument-hint: "<action> <args>"
+description: Sets up a Databricks pipeline for a DynamoDB table whose data flows through Kinesis and Firehose to S3. Use when the user wants a pipeline for a DynamoDB table.
 disable-model-invocation: true
-allowed-tools: Bash(uv run --project *)
 ---
 
-# DynamoDB, Firehose, S3 pipelines
+# Skill Invocation Response Procedure
 
-Requires `uv`. Defaults for every optional YAML setting and command option are in
-`${CLAUDE_SKILL_DIR}/src/sp_dynamo_firehose_s3/v1/defaults.toml`. The first word of
-the arguments is the action. Run it with:
+Run the steps below in order, one at a time. Do only what each step says. Never
+show, quote, or describe a command, and never run any command this procedure
+does not give, including `aws sso login` or any other AWS command.
+
+## 1. Get the DynamoDB table name
+
+Ignore any arguments given with the skill command, and always ask the user this
+question exactly as written, and nothing else:
+
+> What is the name of the DynamoDB table the pipeline reads? For example: bo.suspenseAccounts
+
+Do not rephrase, shorten, or add to the question.
+
+Pass the name to every later command exactly as the user typed it, with the same
+case and punctuation, in place of `<table name>`. Do not correct, normalize, or
+validate it, and do not work out any value from it, such as a snake_case table
+name. The commands do that.
+
+## 2. Check whether the project exists
+
+Run this command once, with the Bash description `Checking the project`:
 
 ```bash
-uv run --project "${CLAUDE_SKILL_DIR}" generate $ARGUMENTS
+uv run --project "${CLAUDE_SKILL_DIR}" check-project '<table name>' "${CLAUDE_PROJECT_DIR}"
 ```
 
-If the action is missing or not listed below, tell the user the available actions
-instead of running anything.
+- `PROJECT_NEW`: show nothing, and continue to step 3.
+- `PROJECT_EXISTS`: do not show the report. Ask the user the line under
+  `Result: PROJECT_EXISTS`, word for word, with the AskUserQuestion tool, header
+  `Overwrite`, and exactly two options: `Yes` and `No`. If the answer is `Yes`,
+  continue to step 3. Otherwise, stop.
+- Any other result: show the report exactly as printed, in one code block, add
+  nothing else, and stop.
 
-Run the command once, with a Bash timeout of 600000 ms. `generate-yaml` and
-`create-stream` print a report that ends with a fixed result block:
+## 3. Get the trigger
 
+Ask the user this question with the AskUserQuestion tool, exactly as written,
+with exactly these two options and descriptions, and nothing else:
+
+- Question: `How should this pipeline be triggered?`
+- Header: `Trigger`
+- Option `batch`: `Runs on a cron schedule.`
+- Option `continuous`: `Runs all the time.`
+
+Keep the answer exactly as the user gave it, even if they typed their own.
+
+## 4. Get the batch schedule
+
+Only if the answer to step 3 is `batch`, ask the user this question exactly as
+written, and nothing else:
+
+> Enter the batch schedule as a Databricks cron expression. For example: 0 0 6 * * ? runs every day at 6:00.
+
+Keep the answer exactly as the user typed it. Do not correct, convert, or
+validate it. scaffold does that.
+
+## 5. Create the stream
+
+First tell the user exactly this, and nothing else:
+
+> Creating infrastructure, hang tight ...
+
+Then run this command once, with a Bash timeout of 600000 ms and the Bash
+description `Creating infrastructure`:
+
+```bash
+uv run --project "${CLAUDE_SKILL_DIR}" create-stream '<table name>'
 ```
-Result: <CODE>
-  <what happened>
-Next step: <what to do>
+
+When it finishes, show the report it printed exactly as printed, in one code
+block, and add nothing else.
+
+If the report's `Result:` is `TIMEOUT`, tell the user exactly this, and nothing
+else:
+
+> Still waiting on AWS, checking again ...
+
+Then run the same command one more time and show its report the same way.
+
+If the last report's `Result:` is `TABLE_NOT_FOUND`, stop. For any other result,
+continue to step 6.
+
+## 6. Read the table's columns
+
+First tell the user exactly this, and nothing else:
+
+> Reading the table's columns ...
+
+Then run this command once, with the Bash description `Reading columns`:
+
+```bash
+uv run --project "${CLAUDE_SKILL_DIR}" prepare-inputs "${CLAUDE_SESSION_ID}" '<table name>'
 ```
 
-Show the report to the user exactly as printed, in a code block, and add nothing
-else: no diagnosis, no summary of your own, and no other advice than its
-`Next step`. Do not run any other command to investigate, check, or fix the
-result, including AWS CLI commands, and do not rerun the action unless the user
-asks. The report already contains every check the skill makes.
+The output has up to two sections:
 
-## Actions
+- `## Columns (for the agent)`: one JSON object per column. It is for you only.
+  Never show it, quote it, or describe it to the user.
+- `## Report`: show the lines after this heading exactly as printed, in one code
+  block, and add nothing else.
 
-### scaffold
+Continue to step 7 only if the report's `Result:` is `COLUMNS_FOUND`. Otherwise,
+stop.
 
-Usage: `scaffold <path-to-yaml> [--output-dir <path>] [--force]`
+## 7. Pick each column's Spark type
 
-Generates a pipeline project. The generator owns the output, so do not write or edit
-pipeline code by hand.
+Do this silently: tell the user nothing, and do not ask them to confirm.
 
-1. Run the command above.
+For every column object from step 6, pick exactly one type from its
+`allowed_types`, using its `name`, `dynamo_type`, and `examples`:
 
-   It creates a uv project at `./dabs/<metadata.name>/` (or `--output-dir <path>`)
-   with `uv init` unless one exists. It then writes the bundle's `databricks.yml`,
-   its job resource `resource/<metadata.name>.job.yml`, and the job code in
-   `src/<package>/`: `bronze.py`, plus `silver.py` and `gold.py` when the YAML has
-   `job.silver` and `job.gold`. It sets the project's scripts to one entry point
-   per job.
+- Money (amounts, balances, prices, costs, fees, totals): `decimal(22,2)`.
+- `S` holding dates such as `2024-03-01`: `date`.
+- `S` holding dates with times such as `2024-03-01T12:00:00Z`: `timestamp`.
+- `S` holding only `true` or `false`: `boolean`.
+- Any other `S`, including IDs, codes, and numbers such as zip codes: `string`.
+- `N` holding whole numbers that are not money: `bigint`.
+- `N` holding fractions that are not money: `double`.
+- `BOOL`: `boolean`.
+- A column with no examples: the first of its `allowed_types`.
+- Any other column has one allowed type: use it.
 
-   It also writes the project's `README.md`, with each layer's description,
-   tables, and columns, and each layer's table DDL for every target, as
-   `ddl/<target>/<layer>.sql` (`dev`, `qa`, `uat`, `prod`). The jobs never create
-   their tables, so these must run before each job's first run. Column comments
-   come from the schema's `description` fields, and metadata columns always get
-   the same comments. Do not run the DDL unless the user asks.
+## 8. Generate the project
 
-2. If it succeeds, report the generated file paths.
+First tell the user exactly this, and nothing else:
 
-3. If it fails, report the error as printed. Do not change the YAML unless the user
-   asks.
+> Generating the project ...
 
-4. If an output file already exists, ask the user before rerunning with `--force`,
-   which overwrites it.
+Then run this command once, with the Bash description `Generating the project`.
+In the JSON, set:
 
-### generate-yaml
+- `types`: every column's `name` from step 6 mapped to the type picked in step 7.
+- `execution_mode`: the answer to step 3.
+- `batch_schedule`: the answer to step 4 as a JSON string, or `null` if step 4
+  was skipped.
 
-Usage: `generate-yaml <dynamodb-table> [--force]`
+```bash
+uv run --project "${CLAUDE_SKILL_DIR}" scaffold "${CLAUDE_SESSION_ID}" '<table name>' "${CLAUDE_PROJECT_DIR}" <<'ANSWERS'
+{"types": {"<column name>": "<type>"}, "execution_mode": "<answer>", "batch_schedule": "<answer>"}
+ANSWERS
+```
 
-Writes `./pipelines/<table>.yaml`, with the table name lowercased and every
-character that is not a letter or digit replaced by a hyphen (`bo.accounts`
-becomes `pipelines/bo-accounts.yaml`). The YAML has every supported field,
-including a `schema` section inferred from the table, for the user to fill in
-before running `scaffold`. Pass the table name exactly as the user gives it. The command
-writes the whole file, so do not write, complete, or edit the YAML yourself, and
-do not suggest a schema from your own knowledge of the table.
-
-Fields with defaults in the defaults file are filled with them, including each
-layer's `checkpointPath` and `targetTable` when those defaults are set.
-`metadata.name` is the same hyphenated name, so `bo.accounts` gets
-`bo-accounts`. Required
-fields without a value are `""` and marked `# Required field, please fill.`
-
-Result codes: `GENERATED`, `INVALID_TABLE_NAME`, `FILE_EXISTS`, `TABLE_NOT_FOUND`, `KEY_NOT_USABLE`,
-`WRITE_FAILED`, and the AWS codes below. Only `GENERATED` writes the file.
-
-For `FILE_EXISTS`, ask the user before rerunning with `--force`, which overwrites
-the file.
-
-### create-stream
-
-Usage: `create-stream <dynamodb-table> [--check]`
-
-Streams a DynamoDB table to S3: a Kinesis data stream named after the table, the
-table's streaming to it, and a Firehose stream `<table>-firehose` that writes to
-the bucket set in the defaults file.
-
-The command first checks every resource. If anything blocks the setup, such as
-the table already streaming to another Kinesis stream, it stops before creating
-anything. Otherwise it creates only what is missing, waits for each resource to
-become active, and confirms everything is connected. Existing resources are never
-changed. With `--check`, it only reports what exists and what it would create.
-Use `--check` whenever the user asks whether the streams exist or are ready.
-
-Result codes:
-
-- Success: `CREATED`, `ALREADY_EXISTED`, and with `--check`, `READY`,
-  `WOULD_CREATE`, `IN_PROGRESS`.
-- Blocked before creating anything: `INVALID_TABLE_NAME`, `TABLE_NOT_FOUND`,
-  `TABLE_STREAMS_ELSEWHERE`, `TABLE_STREAMING_BUSY`, `KINESIS_STREAM_DELETING`,
-  `FIREHOSE_WIRED_ELSEWHERE`, `FIREHOSE_UNUSABLE`.
-- Failed while creating: `FIREHOSE_CONFIG_REJECTED`, `STREAMING_FAILED`,
-  `FIREHOSE_FAILED`, `TIMEOUT`, `NOT_CONFIRMED`, and the AWS codes below. The
-  report's `Created:` line lists what was created before the failure, and a rerun
-  resumes from there.
-
-### AWS result codes
-
-Both actions that call AWS can end with `AWS_CLI_MISSING`, `AWS_CREDENTIALS`,
-`AWS_ACCESS_DENIED`, `AWS_NOT_FOUND`, `AWS_INVALID_ARGUMENT`, or `AWS_ERROR`. For
-`AWS_CREDENTIALS`, the next step tells the user to run `aws sso login`. Never run
-it yourself.
+When it finishes, show the report it printed exactly as printed, in one code
+block, and add nothing else. Then stop, whatever the result.

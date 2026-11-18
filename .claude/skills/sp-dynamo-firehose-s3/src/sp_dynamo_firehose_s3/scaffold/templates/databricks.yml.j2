@@ -1,0 +1,99 @@
+{% set bundle = config.bundle %}
+bundle:
+  name: {{ package }}
+  engine: direct
+
+include:
+  - resource/*.yml
+
+artifacts:
+  {{ package }}_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  environment:
+    description: Environment name that replaces {env} in task paths and table names.
+  compute_policy_id:
+    description: ID of the cluster policy the tasks' compute uses.
+  num_workers:
+    description: Workers on the job cluster, within the cluster policy's range.
+  run-as:
+    description: Application ID of the service principal the job runs as.
+{% if bundle.on_job_failure_webhook_notification_ids %}
+  job_failure_webhooks:
+    description: Notification destinations the job alerts when a run fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+{% if bundle.on_job_failure_emails %}
+  job_failure_emails:
+    description: Addresses the job emails when a run fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+{% if bundle.on_task_failure_webhook_notification_ids %}
+  task_failure_webhooks:
+    description: Notification destinations each task alerts when it fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+{% if bundle.on_task_failure_emails %}
+  task_failure_emails:
+    description: Addresses each task emails when it fails. Set only by prod.
+    type: complex
+    default: []
+{% endif %}
+
+targets:
+{% for target in targets %}
+  {{ target.name }}:
+    mode: production
+    workspace:
+      host: {{ target.host | yaml_string }}
+      root_path: /Workspace/Users/${var.run-as}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      environment: {{ target.name }}
+      compute_policy_id: {{ target.compute_policy | yaml_string }}
+      num_workers: {{ target.num_workers }}
+      run-as:
+        lookup:
+          service_principal: {{ target.service_principal | yaml_string }}
+{% if target.notifies and bundle.on_job_failure_webhook_notification_ids %}
+      job_failure_webhooks:
+{% for webhook_id in bundle.on_job_failure_webhook_notification_ids %}
+        - id: {{ webhook_id | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if target.notifies and bundle.on_job_failure_emails %}
+      job_failure_emails:
+{% for email in bundle.on_job_failure_emails %}
+        - {{ email | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if target.notifies and bundle.on_task_failure_webhook_notification_ids %}
+      task_failure_webhooks:
+{% for webhook_id in bundle.on_task_failure_webhook_notification_ids %}
+        - id: {{ webhook_id | yaml_string }}
+{% endfor %}
+{% endif %}
+{% if target.notifies and bundle.on_task_failure_emails %}
+      task_failure_emails:
+{% for email in bundle.on_task_failure_emails %}
+        - {{ email | yaml_string }}
+{% endfor %}
+{% endif %}
+    run_as:
+      service_principal_name: "${var.run-as}"
+    permissions:
+      - service_principal_name: "${var.run-as}"
+        level: {{ target.service_principal_level }}
+{% for group, level in target.group_levels %}
+      - group_name: {{ group | yaml_string }}
+        level: {{ level }}
+{% endfor %}
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}

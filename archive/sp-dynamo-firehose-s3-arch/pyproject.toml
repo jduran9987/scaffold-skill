@@ -1,0 +1,40 @@
+[project]
+name = "sp-dynamo-firehose-s3"
+version = "0.1.0"
+description = "Generates Databricks pipeline code for the DynamoDB, Firehose, S3 source."
+requires-python = ">=3.12"
+dependencies = [
+    "jinja2>=3.1",
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "tomlkit>=0.15.2",
+]
+
+[project.scripts]
+generate = "sp_dynamo_firehose_s3.router:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.14",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+extend-exclude = ["tests/v1/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "D", "UP", "ANN", "B"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "ANN"]

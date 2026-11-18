@@ -1,0 +1,100 @@
+resources:
+  jobs:
+    bo_suspense_accounts:
+      name: "[${bundle.target}] bo_suspense_accounts"
+      description: >-
+        Loads DynamoDB table bo.suspenseAccounts from the files Firehose
+        writes to S3 into Delta tables. The bronze task appends raw source records
+        to a Delta table as they arrive, along with ingestion and source file
+        metadata. The silver task flattens bronze records into typed columns, one
+        row per change event. The gold task merges each change into a Delta table
+        that keeps the latest version of every primary key.
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: "UTC"
+        pause_status: PAUSED
+      queue:
+        enabled: true
+      tags:
+        project: "bo_suspense_accounts"
+        SOURCE: "dynamo"
+      email_notifications:
+        on_failure: ${var.job_failure_emails}
+      webhook_notifications:
+        on_failure: ${var.job_failure_webhooks}
+      notification_settings:
+        no_alert_for_skipped_runs: false
+      timeout_seconds: 0
+
+      job_clusters:
+        - job_cluster_key: bo_suspense_accounts_cluster
+          new_cluster:
+            policy_id: ${var.compute_policy_id}
+            apply_policy_default_values: true
+            num_workers: ${var.num_workers}
+            custom_tags:
+              environment: ${var.environment}
+
+      tasks:
+        - task_key: bronze
+          job_cluster_key: bo_suspense_accounts_cluster
+          python_wheel_task:
+            package_name: bo_suspense_accounts
+            entry_point: bronze
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
+        - task_key: silver
+          depends_on:
+            - task_key: bronze
+          job_cluster_key: bo_suspense_accounts_cluster
+          python_wheel_task:
+            package_name: bo_suspense_accounts
+            entry_point: silver
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0
+        - task_key: gold
+          depends_on:
+            - task_key: silver
+          job_cluster_key: bo_suspense_accounts_cluster
+          python_wheel_task:
+            package_name: bo_suspense_accounts
+            entry_point: gold
+            parameters:
+              - "--env"
+              - "${var.environment}"
+          libraries:
+            - whl: ../dist/*.whl
+          email_notifications:
+            on_failure: ${var.task_failure_emails}
+          webhook_notifications:
+            on_failure: ${var.task_failure_webhooks}
+          notification_settings:
+            alert_on_last_attempt: true
+            no_alert_for_canceled_runs: true
+            no_alert_for_skipped_runs: false
+          timeout_seconds: 0

@@ -1,1 +1,1 @@
-"""Generator for the DynamoDB, Firehose, S3 pipeline pattern."""
+"""Sets up Databricks pipelines for DynamoDB tables streamed through Firehose to S3."""
